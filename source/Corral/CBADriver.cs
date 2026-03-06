@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -6,7 +6,6 @@ using Microsoft.Boogie;
 using System.Diagnostics;
 using cba.Util;
 using System.IO;
-using System.Runtime.Serialization.Formatters.Binary;
 
 namespace cba
 {
@@ -100,7 +99,6 @@ namespace cba
 
                 // Concretization: map back the trace to the original program
                 var trace4 = cp4.trace;
-                //PrintProgramPath.print(cp4.input as PersistentCBAProgram, trace4, "temp4");
 
                 if (ciPass != null) trace4 = ciPass.mapBackTrace(trace4);
                 var trace3 = trace4;
@@ -110,13 +108,11 @@ namespace cba
                 {
                     trace3 = cp3.mapBackTrace(trace4);
                 }
-                //PrintProgramPath.print(cp3.input as PersistentCBAProgram, trace3, "temp3");
 
                 var trace2 = trace3;
                 if (cp2 != null) trace2 = cp2.mapBackTrace(trace3);
 
                 var trace1 = cp1.mapBackTrace(trace2);
-                //PrintProgramPath.print(cp1.input as PersistentCBAProgram, trace1, "temp1");
 
                 cex = trace1;
 
@@ -132,7 +128,6 @@ namespace cba
                         cp1.getInput().contextBound,
                         ConcurrencyMode.FixedContext);
 
-                //pout.writeToFile("pout.bpl");
                 return false;
             }
         }
@@ -291,7 +286,6 @@ namespace cba
         static bool verifyingPath = false;
         static bool verifyingProg = false;
         static bool refinement = false;
-        static string old_logfile = null;
 
         public static BoogieVerifyOptions progVerifyOptions = null;
         public static BoogieVerifyOptions refinementVerifyOptions = null;
@@ -305,23 +299,17 @@ namespace cba
         {
             // Program
             progVerifyOptions = new BoogieVerifyOptions();
-            progVerifyOptions.NonUniformUnfolding = config.NonUniformUnfolding;
-            progVerifyOptions.newStratifiedInliningAlgo = config.newStratifiedInliningAlgo;
-            progVerifyOptions.CallTree = config.noCallTreeReuse ? null : new HashSet<string>();
+            progVerifyOptions.CallTree = new HashSet<string>();
             progVerifyOptions.UseProverEvaluate = config.useProverEvaluate;
             progVerifyOptions.StratifiedInliningWithoutModels = progVerifyOptions.UseProverEvaluate ? true : false;
-            progVerifyOptions.useFwdBck = config.FwdBckSearch == 1;
-            progVerifyOptions.useDI = config.useDI;
-            progVerifyOptions.extraFlags.UnionWith(config.extraFlags);
-            if (config.staticInlining > 0)
-                progVerifyOptions.StratifiedInlining = 100;
+            progVerifyOptions.useFwdBck = false;
+            progVerifyOptions.useDI = false;
 
             // Path
             pathVerifyOptions = new BoogieVerifyOptions();
             pathVerifyOptions.StratifiedInlining = 100;
-            pathVerifyOptions.newStratifiedInliningAlgo = config.newStratifiedInliningAlgo;
             pathVerifyOptions.UseProverEvaluate = config.useProverEvaluate;
-            pathVerifyOptions.StratifiedInliningWithoutModels = pathVerifyOptions.UseProverEvaluate ? true : false; ;
+            pathVerifyOptions.StratifiedInliningWithoutModels = pathVerifyOptions.UseProverEvaluate ? true : false;
             pathVerifyOptions.useFwdBck = false;
             pathVerifyOptions.useDI = false;
             if (config.printData == 2)
@@ -330,23 +318,8 @@ namespace cba
                 pathVerifyOptions.ModelViewFile = "corral_model";
             }
 
-            if (config.printVerify)
-            {
-                progVerifyOptions.printProg = true;
-                progVerifyOptions.progFileName = "last_query.bpl";
-                pathVerifyOptions.printProg = true;
-                pathVerifyOptions.progFileName = "last_query.bpl";
-            }
-
-            if (config.printFinalProg != null)
-            {
-                progVerifyOptions.printProg = true;
-                progVerifyOptions.progFileName = config.printFinalProg;
-            }
-
             // Refinement
             refinementVerifyOptions = pathVerifyOptions.Copy();
-            //refinementVerifyOptions.UseProverEvaluate = false;
             refinementVerifyOptions.UseProverEvaluate = true;
             refinementVerifyOptions.StratifiedInliningWithoutModels = true;
             refinementVerifyOptions.ModelViewFile = null;
@@ -371,13 +344,6 @@ namespace cba
             verifyingPath = true;
             BoogieVerify.recordTempTime = true;
 
-            
-            if (GlobalConfig.explainQuantifiers != null)
-            {
-                old_logfile = CommandLineOptions.Clo.ProverLogFilePath;
-                CommandLineOptions.Clo.ProverLogFilePath = GlobalConfig.explainQuantifiers;
-            }
-
             startTime = DateTime.Now;
         }
 
@@ -388,12 +354,6 @@ namespace cba
 
             GlobalConfig.InferPass = ci;
             BoogieVerify.recordTempTime = false;
-            //CommandLineOptions.Clo.ModelViewFile = null;
-
-            if (GlobalConfig.explainQuantifiers != null)
-            {
-                CommandLineOptions.Clo.ProverLogFilePath = old_logfile;
-            }
 
             Stats.pathVerificationTime += (DateTime.Now - startTime);
         }
@@ -410,8 +370,6 @@ namespace cba
 
             BoogieVerify.options = progVerifyOptions;
 
-            // AL: adding logging
-            //CommandLineOptions.Clo.ProverLogFilePath = "logProg";
             startTime = DateTime.Now;
         }
 
@@ -427,70 +385,11 @@ namespace cba
         public static void beginRefinement()
         {
             refinement = true;
-
-            // AL: adding logging
-            //CommandLineOptions.Clo.ProverLogFilePath = "logRefine";
-
         }
 
         public static void endRefinement()
         {
             refinement = false;
-        }
-    }
-
-    [Serializable]
-    public class CorralState
-    {
-        public HashSet<string> CallTree;
-        public HashSet<string> TrackedVariables;
-
-        public CorralState()
-        {
-            CallTree = new HashSet<string>();
-            TrackedVariables = new HashSet<string>();
-        }
-
-        public static CorralState GetCorralState(string file)
-        {
-            if (file == null || !System.IO.File.Exists(file))
-                return null;
-
-            var serailizer = new BinaryFormatter();
-            FileStream stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None);
-            var cs = (CorralState)serailizer.Deserialize(stream);
-            stream.Close();
-
-            return cs;
-        }
-
-        public static void AbsorbPrevState(Configs config, BoogieVerifyOptions progVerifyOptions)
-        {
-            var cs = GetCorralState(config.prevCorralState);
-            if (cs != null)
-            {
-                progVerifyOptions.CallTree = cs.CallTree;
-                config.trackedVars.UnionWith(cs.TrackedVariables);
-            }
-        }
-
-        public static void DumpCorralState(Configs config, HashSet<string> CallTree, HashSet<string> Vars)
-        {
-            DumpCorralState(config.dumpCorralState, CallTree, Vars);
-        }
-
-        public static void DumpCorralState(string file, HashSet<string> CallTree, HashSet<string> Vars)
-        {
-            if (file != null)
-            {
-                var cs = new CorralState();
-                cs.CallTree = CallTree;
-                cs.TrackedVariables = Vars;
-                BinaryFormatter serializer = new BinaryFormatter();
-                FileStream stream = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None);
-                serializer.Serialize(stream, cs);
-                stream.Close();
-            }
         }
     }
 }

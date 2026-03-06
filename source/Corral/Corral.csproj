@@ -15,7 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CoreLib\CoreLib.csproj" />
-    <ProjectReference Include="..\ExplainError\ExplainError.csproj" />
+
     <ProjectReference Include="..\ProgTransformation\ProgTransformation.csproj" />
     <ProjectReference Include="..\Util\CorralUtil.csproj" />
   </ItemGroup>
