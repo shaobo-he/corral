@@ -304,6 +304,7 @@ namespace cba
             progVerifyOptions.StratifiedInliningWithoutModels = progVerifyOptions.UseProverEvaluate ? true : false;
             progVerifyOptions.useFwdBck = false;
             progVerifyOptions.useDI = false;
+            progVerifyOptions.newStratifiedInliningAlgo = "";
 
             // Path
             pathVerifyOptions = new BoogieVerifyOptions();
@@ -312,6 +313,7 @@ namespace cba
             pathVerifyOptions.StratifiedInliningWithoutModels = pathVerifyOptions.UseProverEvaluate ? true : false;
             pathVerifyOptions.useFwdBck = false;
             pathVerifyOptions.useDI = false;
+            pathVerifyOptions.newStratifiedInliningAlgo = "";
             if (config.printData == 2)
             {
                 pathVerifyOptions.StratifiedInliningWithoutModels = false;
