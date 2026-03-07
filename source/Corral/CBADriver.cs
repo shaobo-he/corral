@@ -35,6 +35,7 @@ namespace cba
             //////
             
             VariableSlicePass cp1 = new VariableSlicePass(trackedVars);
+            curr = cp1.run(curr);
 
             // Now verify
             VerificationPass cp4 = new VerificationPass(true, new HashSet<string>());
