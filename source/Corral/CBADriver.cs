@@ -35,33 +35,9 @@ namespace cba
             //////
             
             VariableSlicePass cp1 = new VariableSlicePass(trackedVars);
-            StormInstrumentationPass cp2 = null;
-            var recordK = new HashSet<string>();
 
-            if (!GlobalConfig.isSingleThreaded)
-            {
-                cp2 = new StormInstrumentationPass();
-            }
-
-            StaticInliningAndUnrollingPass cp3 = null;
-            if (GlobalConfig.staticInlining > 0) cp3 = new StaticInliningAndUnrollingPass(new StaticSettings(CommandLineOptions.Clo.RecursionBound, CommandLineOptions.Clo.RecursionBound));
-
-                // infer contracts block was removed since Houdini and ContractInfer are no longer supported
-
-            // record k and tid
-            if (cp2 != null)
-            {
-                recordK.Add(cp2.varKName); recordK.Add(cp2.tidVarName);
-            }
-
-            if (GlobalConfig.varsToRecord.Count != 0)
-            {
-                recordK.UnionWith(GlobalConfig.varsToRecord);
-                recordK.IntersectWith(trackedVars.Variables);
-            }
-
-            // Now verify  
-            VerificationPass cp4 = new VerificationPass(true, recordK);
+            // Now verify
+            VerificationPass cp4 = new VerificationPass(true, new HashSet<string>());
             curr = cp4.run(curr);
 
             reachedBound = cp4.reachedBound;
@@ -82,18 +58,7 @@ namespace cba
                 // Concretization: map back the trace to the original program
                 var trace4 = cp4.trace;
 
-                var trace3 = trace4;
-                
-                
-                if (cp3 != null)
-                {
-                    trace3 = cp3.mapBackTrace(trace4);
-                }
-
-                var trace2 = trace3;
-                if (cp2 != null) trace2 = cp2.mapBackTrace(trace3);
-
-                var trace1 = cp1.mapBackTrace(trace2);
+                var trace1 = cp1.mapBackTrace(trace4);
 
                 cex = trace1;
 
@@ -164,14 +129,6 @@ namespace cba
         }
     }
 
-    public class ConcurrentProgVerifier : GeneralVerifier
-    {
-        public override bool checkPath(PersistentCBAProgram prog, VarSet trackedVars)
-        {
-            return CBADriver.checkPath(prog, trackedVars);
-        }
-    }
-
     public class SequentialProgVerifier : GeneralVerifier
     {
         public override bool checkPath(PersistentCBAProgram prog, VarSet trackedVars)
@@ -180,17 +137,9 @@ namespace cba
 
             // Do variable slicing, inlining and verify
             var abs = new VariableSlicePass(trackedVars);
-            prog = abs.run(prog);            
+            prog = abs.run(prog);
 
-            VerificationPass verify = null;
-            if (GlobalConfig.useLocalVariableAbstraction)
-            {
-                verify = new StaticInlineAndVerifyPass(new StaticSettings(-1, 1), false);
-            }
-            else
-            {
-                verify = new VerificationPass(false);
-            }
+            VerificationPass verify = new VerificationPass(false);
 
             try
             {

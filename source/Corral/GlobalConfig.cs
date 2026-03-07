@@ -11,51 +11,11 @@ namespace cba
         // Is the program single threaded?
         public static bool isSingleThreaded = false;
 
-        public static bool useLocalVariableAbstraction = false;
-
         // Generate a C Trace for concurrency explorer
         public static TraceFormat? genCTrace = null;
 
         // Recusion bound
         public static int recursionBound = 2;
-
-        // The refinement algorithm to use
-        public static char[] refinementAlgo = { 't', 't', 't', 't'};
-
-        // For inferring contracts
-        public static ContractInfer InferPass = null;
-
-        // Print the instrumented bpl file
-        public static bool printInstrumented
-        {
-            get
-            {
-                return InstrumentationConfig.printInstrumented;
-            }
-            set
-            {
-                InstrumentationConfig.printInstrumented = value;
-            }
-        }
-
-        // Name of the instrumented bpl file to print
-        public static string instrumentedFile
-        {
-            get
-            {
-                return InstrumentationConfig.instrumentedFile;
-            }
-            set
-            {
-                InstrumentationConfig.instrumentedFile = value;
-            }
-        }
-
-        // additional variables to record
-        public static HashSet<string> varsToRecord = new HashSet<string>();
-
-        // static inlining?
-        public static int staticInlining = 0;
 
         // Generic annotations
         public static List<string> annotations = new List<string>();
@@ -65,9 +25,6 @@ namespace cba
 
         // Use ArrayTheory in the boogie verifier
         public static ArrayTheoryOptions useArrayTheory = ArrayTheoryOptions.WEAK;
-
-        // Used for dumping out the final Z3 query
-        public static string explainQuantifiers = null;
 
         // Hint for when to start conserving memory
         public static int memLimit
@@ -108,9 +65,6 @@ namespace cba
             }
         }
 
-        // Print all traces produced during the abstraction-refinement loop
-        public static bool printAllTraces = false;
-
         // Timeout (0 means infinity)
         public static int timeOut = 0;
 
@@ -134,6 +88,5 @@ namespace cba
             return false;
         }
 
-        public static bool cadeTiming = false;
     }
 }

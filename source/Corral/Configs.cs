@@ -43,7 +43,6 @@ namespace cba
         public int recursionBound { get; private set; }
 
         public TraceFormat? genCTrace { get; private set; }
-        public bool noTrace { get; private set; }
         public bool noTraceOnDisk { get; private set; }
 
         public string inputFile;
@@ -132,7 +131,6 @@ namespace cba
             trackAllVars = false;
 
             genCTrace = null;
-            noTrace = false;
             noTraceOnDisk = false;
             inputFile = null;
             arrayTheory = ArrayTheoryOptions.WEAK;

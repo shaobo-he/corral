@@ -208,50 +208,24 @@ namespace cba
             PruneProgramPass.RemoveUnreachable = false;
 
             // Sequential instrumentation
-            ExtractLoopsPass elPass = null;
             var seqInstr = new SequentialInstrumentation();
-            if (GlobalConfig.isSingleThreaded)
+            curr = seqInstr.run(curr);
+
+            // Flag settings for sequential programs
+            VerificationPass.usePruning = false;
+
+            if (!config.useProverEvaluate)
             {
-                curr = seqInstr.run(curr);
-
-                // Flag settings for sequential programs
-                VerificationPass.usePruning = false;
-
-                if (!config.useProverEvaluate)
-                {
-                    ConfigManager.progVerifyOptions.StratifiedInliningWithoutModels = true;
-                    if (config.printData == 0)
-                        ConfigManager.pathVerifyOptions.StratifiedInliningWithoutModels = true;
-                }
-
-                // extract loops
-                if (GlobalConfig.InferPass != null)
-                {
-                    elPass = new ExtractLoopsPass(true);
-                    curr = elPass.run(curr);
-                    CommandLineOptions.Clo.ExtractLoops = false;
-                }
-            }
-            else
-            {
-                seqInstr = null;
-                if (GlobalConfig.InferPass != null)
-                {
-                    throw new InvalidInput("We currently don't support summaries for concurrent programs");
-                }
-                if (config.NumCex > 1)
-                {
-                    throw new InvalidInput("Multiple counterexamples not yet supported for concurrent programs");
-                }
-
-                GlobalConfig.InferPass = null;
+                ConfigManager.progVerifyOptions.StratifiedInliningWithoutModels = true;
+                if (config.printData == 0)
+                    ConfigManager.pathVerifyOptions.StratifiedInliningWithoutModels = true;
             }
 
             ProgTransformation.PersistentProgram.FreeParserMemory();
             #endregion
 
             // For debugging, create an Action for printing a trace at the source level
-            var passes = new List<CompilerPass>(new CompilerPass[] { elPass, seqInstr, prune, rcalls, apass });
+            var passes = new List<CompilerPass>(new CompilerPass[] { seqInstr, prune, rcalls, apass });
             var printTrace = new Action<ErrorTrace, string>((trace, fileName) =>
                 {
                     if (GlobalConfig.genCTrace == null)
@@ -285,8 +259,7 @@ namespace cba
 
                 if (cexTrace != null)
                 {
-                    if (elPass != null) cexTrace = elPass.mapBackTrace(cexTrace);
-                    if (seqInstr != null) cexTrace = seqInstr.mapBackTrace(cexTrace);
+                    cexTrace = seqInstr.mapBackTrace(cexTrace);
                     cexTrace = prune.mapBackTrace(cexTrace);
                     cexTrace = rcalls.mapBackTrace(cexTrace);
 
@@ -411,18 +384,6 @@ namespace cba
                 Console.WriteLine("Single threaded program detected");
             }
 
-            if (!GlobalConfig.isSingleThreaded)
-            {
-                try
-                {
-                    WellFormedProg.check(init);
-                }
-                catch (InvalidInput e)
-                {
-                    throw new InvalidInput("Input Program not well-formed.\n" + e.Message);
-                }
-            }
-
             #endregion
 
             // force inline
@@ -453,9 +414,6 @@ namespace cba
                 throw new InvalidProg("Cannot typecheck " + config.inputFile);
             }
             CommandLineOptions.Clo.DoModSetAnalysis = false;
-
-            // thread-local variables are always tracked
-            var globals = BoogieUtil.GetGlobalVariables(init);
 
             // Gather the set of initially tracked variables
             initialTrackedVars = getTrackedVars(init, config);
@@ -552,85 +510,13 @@ namespace cba
 
         }
 
-        public static void InlineProcedures(Program program)
-        {
-            var si = CommandLineOptions.Clo.StratifiedInlining;
-            CommandLineOptions.Clo.StratifiedInlining = 0;
-            ExecutionEngine.EliminateDeadVariables(program);
-            ExecutionEngine.Inline(program);
-            CommandLineOptions.Clo.StratifiedInlining = si;
-        }
-
-        // Stats: LOC on trace and number of branches
-        public static void TraceStats(ErrorTrace trace, Dictionary<string, Implementation> nameImplMap, ref int loc, ref HashSet<int> branches)
-        {
-            if (trace == null || !nameImplMap.ContainsKey(trace.procName))
-                return;
-
-            var impl = nameImplMap[trace.procName];
-            var nb = new HashSet<int>();
-            var blockMap = BoogieUtil.labelBlockMapping(impl);
-            var first = true;
-
-            foreach (var blk in trace.Blocks)
-            {
-                if (first)
-                {
-                    first = false;
-                    continue;
-                }
-
-                if (blockMap.ContainsKey(blk.blockName))
-                {
-                    var ablk = blockMap[blk.blockName];
-                    foreach (var acmd in ablk.Cmds.OfType<PredicateCmd>())
-                    {
-                        if (QKeyValue.FindStringAttribute(acmd.Attributes, "sourceFile") != null) loc++;
-                        if (QKeyValue.FindIntAttribute(acmd.Attributes, "breadcrumb", -1) != -1)
-                            nb.Add(QKeyValue.FindIntAttribute(acmd.Attributes, "breadcrumb", -1));
-                    }
-                }
-
-                foreach (var ccmd in blk.Cmds.OfType<CallInstr>())
-                {
-                    TraceStats(ccmd.calleeTrace, nameImplMap, ref loc, ref branches);
-                }
-            }
-
-            branches.UnionWith(nb);
-        }
-
-
         // Check program "inputProg" using variable abstraction
         public static bool checkAndRefine(PersistentCBAProgram prog, RefinementState refinementState, Action<ErrorTrace, string> printTrace, out ErrorTrace cexTrace)
         {
             cexTrace = null;
             var outcomeSuccess = true;
-            var finerCheck = false;
-            var lightweight = false;
-            var optRefinementLoop = true;
-
-            #region flag setting
-            if (GlobalConfig.refinementAlgo[3] == 'f')
-                finerCheck = false;
-            else 
-                finerCheck = GlobalConfig.isSingleThreaded ? false : true;
-
-            if (GlobalConfig.refinementAlgo[2] == 'f')
-                lightweight = false;
-            else
-                lightweight = true;
-
-            if (GlobalConfig.refinementAlgo[1] == 'f')
-                GeneralRefinementScheme.useHierarchicalSearch = false;
-            else
-                GeneralRefinementScheme.useHierarchicalSearch = true;
-
-            if (GlobalConfig.refinementAlgo[0] == 'f')
-                optRefinementLoop = false;
-            else
-                optRefinementLoop = true;
-            #endregion
+            var lightweight = true;
+            GeneralRefinementScheme.useHierarchicalSearch = true;
 
             // This loop exits only under two conditions: 
             //     - The abstracted program had no errors
@@ -648,10 +534,7 @@ namespace cba
 
                 ProgTransformation.PersistentProgramIO.CheckMemoryPressure();
 
-                if (!GlobalConfig.useLocalVariableAbstraction)
-                    Log.WriteLine("Verifying program while tracking: {0}", refinementState.getVars().Variables.Print());
-                else
-                    Log.WriteLine("Verifying program while tracking: {0}", refinementState.getVars().ToString());
+                Log.WriteLine("Verifying program while tracking: {0}", refinementState.getVars().Variables.Print());
 
                 // This records the transformation made when "curr" is
                 // transformed to "counterexample"
@@ -676,11 +559,8 @@ namespace cba
 
                 refinementState.Add(new TraceMapping(tinfo));
 
-                // Check if true bug. Otherwise, gather variables to track                
-                if (optRefinementLoop)
-                    success = checkAndRefinePathFewPasses(counterexample, refinementState, out cexTrace);
-                else
-                    success = checkAndRefinePath(counterexample, refinementState, out cexTrace);
+                // Check if true bug. Otherwise, gather variables to track
+                success = checkAndRefinePathFewPasses(counterexample, refinementState, out cexTrace);
 
                 if (!success)
                 {
@@ -690,40 +570,6 @@ namespace cba
                     break;
                 }
 
-                while (finerCheck)
-                {
-                    // Expand the check to all possible interleavings contained in counterexample
-                    counterexample.mode = ConcurrencyMode.AnyInterleaving;
-
-                    PersistentCBAProgram counterexample2 = null;
-                    InsertionTrans tinfo2 = null;
-                    ErrorTrace cexTrace2 = null;
-                    
-                    success =
-                        CBADriver.checkPath(counterexample, refinementState.getVars(), true, out counterexample2, out tinfo2, out cexTrace2);
-
-                    // We have enough tracked vars
-                    if (success) break;
-                    Debug.Assert(counterexample2.mode == ConcurrencyMode.FixedContext);
-
-                    // We don't have enough tracked vars -- track more
-                    Log.Write("Program has a potential bug: ");
-
-                    refinementState.Push();
-                    refinementState.Add(new TraceMapping(tinfo2));
-                    success = checkAndRefinePathFewPasses(counterexample2, refinementState, out cexTrace2);
-                    refinementState.Pop();
-
-                    if (!success)
-                    {
-                        // Generate cex in the original program
-                        cexTrace2 = tinfo2.mapBackTrace(cexTrace2);
-                        cexTrace = tinfo.mapBackTrace(cexTrace2);
-                        outcomeSuccess = false;
-                        break;
-                    }
-                }
-                
                 refinementState.Pop();
 
                 // We've found a bug
@@ -757,24 +603,12 @@ namespace cba
 
             cexTrace = null;
 
-            StormInstrumentationPass cp1 = null;
-
-            if (!GlobalConfig.isSingleThreaded)
-            {
-                cp1 = new StormInstrumentationPass();
-            }
-
-            var prog = counterexample;
-            if (cp1 != null) prog = cp1.run(prog);
-
             refinementState.Push();
-
-            if (cp1 != null) refinementState.Add(new InstrMapping(cp1));
 
             ConfigManager.beginRefinement();
 
             // Compute the new set of tracked variables to rule out this counterexample
-            var refine = new GeneralRefinementScheme(new SequentialProgVerifier(), true, prog, refinementState);
+            var refine = new GeneralRefinementScheme(new SequentialProgVerifier(), true, counterexample, refinementState);
             refine.doRefinement();
             if (refine.useZ3Search)
             {
@@ -786,35 +620,6 @@ namespace cba
             refinementState.Pop();
 
             return true;
-        }
-
-        // Does field refinement
-        private static bool checkAndRefinePath(PersistentCBAProgram counterexample,
-            RefinementState refinementState, out ErrorTrace cexTrace)
-        {
-            BoogieVerify.setTimeOut(GlobalConfig.getTimeLeft());
-
-            // Check if counterexample is valid
-            var success = CBADriver.checkPath(counterexample, counterexample.allVars, out cexTrace);
-
-            if (!success)
-            {
-                Log.WriteLine("True bug");
-                return false;
-            }
-            else
-            {
-                Log.WriteLine("False bug");
-            }
-
-            cexTrace = null;
-
-            // Compute the new set of tracked variables to rule out this counterexample
-            var refine = new GeneralRefinementScheme(new ConcurrentProgVerifier(), counterexample, refinementState);
-            refine.doRefinement();
-
-            return true;
-
         }
 
         // Returns the set of all global variables in the program, as well as the ones
