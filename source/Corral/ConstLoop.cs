@@ -1,10 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using cba.Util;
 using cba;
-using Microsoft.Boogie.Houdini;
 using Microsoft.Boogie;
 using System.Diagnostics;
 using System.Diagnostics.Contracts;
@@ -230,23 +229,6 @@ namespace cba
                         .Where(sp => sp.Length == 2)
                         .Select(sp => sp[1])
                         .Where(loop => possibleLoops.Contains(loop)));
-
-                    // sdv front-end notion of "counter loops"
-                    var counterAnn = GlobalConfig.annotations
-                        .Where(s => s.StartsWith("PruneCounterLoop:"))
-                        .Select(s => s.Split(':'))
-                        .Where(sp => sp.Length == 2)
-                        .Select(sp => Int32.Parse(sp[1]));
-
-                    if (counterAnn.Any())
-                    {
-                        var counterLoopBound = counterAnn.First();
-                        annotated.UnionWith(
-                            loopImpls.Where(impl => getCounterAnnotation(impl).Item1 >= counterLoopBound)
-                            .Select(impl => impl.Name));
-                    }
-                    annotated.ExceptWith(cLoops);
-                    cLoops.UnionWith(annotated);
                             
                 }
             }

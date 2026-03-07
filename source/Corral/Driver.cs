@@ -386,8 +386,7 @@ namespace cba
             // errors. We check for type errors later
             Program init = BoogieUtil.ReadAndOnlyResolve(config.inputFile);
 
-            // Gather templates for Houdini
-            var extraVars = findTemplates(init, config);
+
 
             #region Check that the input is well-formed
 
@@ -601,63 +600,6 @@ namespace cba
             branches.UnionWith(nb);
         }
 
-        public static HashSet<string> findTemplates(Program program, Configs config)
-        {
-            var templateVarNames = new HashSet<Variable>();
-            List<Ensures> ens = new List<Ensures>();
-            List<Requires> req = new List<Requires>();
-            var extra = new HashSet<string>();
-
-            var newDecls = new List<Declaration>();
-            foreach (var decl in program.TopLevelDeclarations)
-            {
-                if (!QKeyValue.FindBoolAttribute(decl.Attributes, "template"))
-                {
-                    newDecls.Add(decl);
-                    continue;
-                }
-                if (decl is GlobalVariable)
-                {
-                    templateVarNames.Add((decl as Variable));
-                }
-                else if (decl is Procedure)
-                {
-                    var proc = decl as Procedure;
-
-                    proc.Ensures.OfType<Ensures>().Where(e =>
-                        (!BoogieUtil.checkAttrExists("abshoudini", e.Attributes)))
-                        .Iter(e => ens.Add(e));
-
-                    proc.Requires.OfType<Requires>().Where(r =>
-                        (!BoogieUtil.checkAttrExists("abshoudini", r.Attributes)))
-                        .Iter(r => req.Add(r));
-                }
-
-            }
-            foreach (Ensures en in ens)
-            {
-                var gu = new GlobalVarsUsed();
-                gu.VisitEnsures(en);
-                extra.UnionWith(gu.globalsUsed);
-            }
-            foreach (Requires re in req)
-            {
-                var gu = new GlobalVarsUsed();
-                gu.VisitRequires(re);
-                extra.UnionWith(gu.globalsUsed);
-            }
-            foreach (var t in templateVarNames)
-            {
-                extra.Remove(t.Name);
-            }
-
-            program.TopLevelDeclarations = newDecls;
-            GlobalConfig.InferPass = new ContractInfer(templateVarNames, req, ens, -1, -1);
-            return extra;
-        }
-
-        // For debugging (printing abstract traces)
-        static int traceCounterDbg = 0;
 
         // Check program "inputProg" using variable abstraction
         public static bool checkAndRefine(PersistentCBAProgram prog, RefinementState refinementState, Action<ErrorTrace, string> printTrace, out ErrorTrace cexTrace)

@@ -1,10 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using cba.Util;
 using cba;
-using Microsoft.Boogie.Houdini;
 using Microsoft.Boogie;
 using System.Diagnostics;
 using System.Diagnostics.Contracts;

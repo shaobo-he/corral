@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -9,7 +9,7 @@ using System.IO;
 
 namespace cba
 {
-    public enum TraceFormat {  SDV, ConcurrencyExplorer };
+    public enum TraceFormat {  ConcurrencyExplorer };
 
     // For printing a program and a  concurrent  path in it. The output can be pulled in by
     // concurrency explorer.
@@ -23,8 +23,7 @@ namespace cba
         private static int tidCounter = 0;
         public static Dictionary<Duple<string, string>, Tuple<string, string, string>> mapCTrace = null;
 
-        public static TraceFormat traceFormat = TraceFormat.SDV;
-        public static int traceCounterSdv = 1;
+        public static TraceFormat traceFormat = TraceFormat.ConcurrencyExplorer;
 
         // Print data values
         public static int printData = 0;
@@ -373,10 +372,8 @@ namespace cba
                     pathFile.WriteLine("s");
                     pathFile.WriteLine("#");
                 }
-                else if (traceFormat == TraceFormat.SDV)
-                {
-                    pathFile.WriteLine("0 \"?\" 0 false ^ Call \"OS\" \"main\"");
-                }
+                else {} 
+
             }
         }
 
@@ -622,14 +619,7 @@ namespace cba
 
                 if (pathFile != null)
                 {
-                    if (traceFormat == TraceFormat.ConcurrencyExplorer)
-                    {
                         pathFile.Write(getString(eid, extra));
-                    }
-                    else
-                    {
-                        pathFile.Write(getString(traceCounterSdv++, extra));
-                    }
                 }
             }
 
@@ -654,12 +644,10 @@ namespace cba
                     }
                     return toPrint;
                 }
-                else if(traceFormat == TraceFormat.SDV)
-                {
-                    return string.Format("{0} {1} true ^==^{2}^== Atomic Assignment{3}", eid, stk, extra.Replace(" ","_").Replace(Environment.NewLine, "^"), Environment.NewLine);
-                }
+                else { return ""; }
 
-                return "";
+
+
             }
 
         }
@@ -914,12 +902,7 @@ namespace cba
                     {
                         ret += wi.procName + "|" + fileName + "|" + wi.tok.line + "|";
                     }
-                    else if(traceFormat == TraceFormat.SDV)
-                    {
-                        ret += string.Format("\"{0}\" {1}", fileName, wi.tok.line);
-                        // only top-of-stack
-                        break;
-                    }
+
                 }
             }
             else
@@ -951,12 +934,7 @@ namespace cba
                     {
                         ret += wi.procName + "|" + file + "|" + line + "|";
                     }
-                    else if (traceFormat == TraceFormat.SDV)
-                    {
-                        ret += string.Format("\"{0}\" {1}", file, line);
-                        // only top-of-stack
-                        break;
-                    }
+
                 }
             }
 

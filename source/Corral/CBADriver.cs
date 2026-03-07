@@ -46,25 +46,7 @@ namespace cba
             StaticInliningAndUnrollingPass cp3 = null;
             if (GlobalConfig.staticInlining > 0) cp3 = new StaticInliningAndUnrollingPass(new StaticSettings(CommandLineOptions.Clo.RecursionBound, CommandLineOptions.Clo.RecursionBound));
 
-            ContractInfer ciPass = null;
-
-            // Run the source transformations
-            curr = cp1.run(curr);
-            if (cp2 != null) curr = cp2.run(curr);
-            if(cp3 != null) curr = cp3.run(curr);
-
-            // infer contracts
-            if (GlobalConfig.InferPass != null)
-            {
-                ciPass = new ContractInfer(GlobalConfig.InferPass);
-                ciPass.ExtractLoops = false;
-                curr = ciPass.run(curr);
-                Console.WriteLine("Houdini took {0} seconds", ciPass.lastRun.TotalSeconds.ToString("F2"));
-                GlobalConfig.InferPass = null;
-
-                // add summaries to the original program
-                prog = ciPass.addSummaries(prog);
-            }
+                // infer contracts block was removed since Houdini and ContractInfer are no longer supported
 
             // record k and tid
             if (cp2 != null)
@@ -100,7 +82,6 @@ namespace cba
                 // Concretization: map back the trace to the original program
                 var trace4 = cp4.trace;
 
-                if (ciPass != null) trace4 = ciPass.mapBackTrace(trace4);
                 var trace3 = trace4;
                 
                 
@@ -293,8 +274,6 @@ namespace cba
 
         static DateTime startTime = DateTime.Now;
 
-        static ContractInfer ci = null;
-
         public static void Initialize(Configs config)
         {
             // Program
@@ -333,9 +312,6 @@ namespace cba
         {
             Debug.Assert(!verifyingPath && !verifyingProg);
 
-            ci = GlobalConfig.InferPass;
-            GlobalConfig.InferPass = null;
-
             Stats.pathVerificationQueries++;
 
             if (refinement)
@@ -354,7 +330,6 @@ namespace cba
             Debug.Assert(verifyingPath);
             verifyingPath = false;
 
-            GlobalConfig.InferPass = ci;
             BoogieVerify.recordTempTime = false;
 
             Stats.pathVerificationTime += (DateTime.Now - startTime);

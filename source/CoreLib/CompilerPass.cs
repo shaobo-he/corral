@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -730,50 +730,7 @@ namespace cba
 
         }
 
-        // This inlines a program to the given inline depth.
-        // Note: Set the flag CommandLineOptions.Clo.ProcedureInlining to get the
-        // desired effect on leaf-level procedure calls
-        public static void InlineToDepth(Program program)
-        {
-            var impls = program.TopLevelDeclarations.OfType<Implementation>();
 
-            if (CommandLineOptions.Clo.InlineDepth < 0)
-                return;
-            /*
-             * TODO: FIX!
-            foreach (Implementation impl in impls)
-            {
-                var inlineRequiresVisitor = new Microsoft.Boogie.Houdini.InlineRequiresVisitor();
-                inlineRequiresVisitor.Visit(impl);
-            }
-
-            foreach (Implementation impl in impls)
-            {
-                var freeRequiresVisitor = new Microsoft.Boogie.Houdini.FreeRequiresVisitor();
-                freeRequiresVisitor.Visit(impl);
-            }
-            */
-            foreach (Implementation impl in impls)
-            {
-                var inlineEnsuresVisitor = new Microsoft.Boogie.Houdini.InlineEnsuresVisitor();
-                inlineEnsuresVisitor.Visit(impl);
-            }
-
-            foreach (Implementation impl in impls)
-            {
-                impl.OriginalBlocks = impl.Blocks;
-                impl.OriginalLocVars = impl.LocVars;
-            }
-            foreach (Implementation impl in impls)
-            {
-                Inliner.ProcessImplementationForHoudini(program, impl);
-            }
-            foreach (Implementation impl in impls)
-            {
-                impl.OriginalBlocks = null;
-                impl.OriginalLocVars = null;
-            }
-        }
 
         private void removeInlinedProcs(CBAProgram program)
         {
