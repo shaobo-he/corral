@@ -210,6 +210,7 @@ namespace cba
             // Sequential instrumentation
             var seqInstr = new SequentialInstrumentation();
             curr = seqInstr.run(curr);
+            initialTrackedVars.Add(seqInstr.assertsPassedName);
 
             // Flag settings for sequential programs
             VerificationPass.usePruning = false;
