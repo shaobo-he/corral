@@ -74,6 +74,7 @@ namespace cba
             GlobalConfig.addInvariants = 2;
 
             CoreLib.StratifiedInlining.StratifiedInliningVerbose = config.verboseMode;
+            BoogieVerify.ignoreAssertMethods = new HashSet<string>();
 
             ProgTransformation.TransformationPass.writeAllFiles = false;
             Log.noDebuggingOutput = true;
@@ -147,7 +148,7 @@ namespace cba
 
             #region initial program rewriting
 
-            var inputProg = GetInputProgram(config);
+            var inputProg = GetInputProgram(config, out var initialTrackedVars);
             if (inputProg == null) return 0;
 
             // infer loop bound 
@@ -271,7 +272,7 @@ namespace cba
 
                 Log.WriteMemUsage();
 
-                var refinementState = new RefinementState(curr, new HashSet<string>(), false);
+                var refinementState = new RefinementState(curr, initialTrackedVars, false);
 
                 ErrorTrace cexTrace = null;
                 checkAndRefine(curr, refinementState, printTrace, out cexTrace);
@@ -379,7 +380,7 @@ namespace cba
             return new PersistentCBAProgram(prog, prog.mainProcName, prog.contextBound, program.mode);
         }
 
-        public static PersistentCBAProgram GetInputProgram(Configs config)
+        public static PersistentCBAProgram GetInputProgram(Configs config, out HashSet<string> initialTrackedVars)
         {
             // This is to check the input program for parsing and resolution
             // errors. We check for type errors later
@@ -458,7 +459,7 @@ namespace cba
             var globals = BoogieUtil.GetGlobalVariables(init);
 
             // Gather the set of initially tracked variables
-            var initialTrackedVars = getTrackedVars(init, config);
+            initialTrackedVars = getTrackedVars(init, config);
 
             // Gather source info
             if (GlobalConfig.genCTrace != null)
