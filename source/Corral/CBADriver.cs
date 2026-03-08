@@ -37,15 +37,6 @@ namespace cba
             VariableSlicePass cp1 = new VariableSlicePass(trackedVars);
             curr = cp1.run(curr);
 
-            // HACK: emitting to a null writer here normalizes some static internal state
-            // in Boogie (likely AST node ID counters) so that ExtractLoops() produces
-            // a procedure ordering that the stratified inliner explores efficiently.
-            // Without this, mini-corral inlines ~10% more procedures than master for
-            // the same program, causing a performance regression. The root cause is that
-            // master's richer initialization path happens to advance these counters to a
-            // better state as a side effect; we replicate that here explicitly.
-            curr.getCBAProgram().Emit(new TokenTextWriter(TextWriter.Null));
-
             // Now verify
             VerificationPass cp4 = new VerificationPass(true, new HashSet<string>());
             curr = cp4.run(curr);
