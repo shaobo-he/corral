@@ -210,7 +210,7 @@ namespace cba
 
         public override Variable VisitVariable(Variable node)
         {
-            if(node.TypedIdent.Type != null) types.Add(node.TypedIdent.Type);
+            if (node.TypedIdent.Type != null) types.Add(node.TypedIdent.Type);
             return base.VisitVariable(node);
         }
     }

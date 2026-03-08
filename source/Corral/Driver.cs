@@ -18,7 +18,7 @@ namespace cba
             try
             {
                 return run(args);
-            } 
+            }
             catch (InvalidInput e)
             {
                 Console.WriteLine();
@@ -43,13 +43,13 @@ namespace cba
                 Console.WriteLine();
                 Console.WriteLine("Stopping: {0}", e.Message);
                 return 1;
-            } 
+            }
             catch (OutOfMemoryException e)
             {
                 Console.WriteLine();
                 Console.WriteLine("Stopping: {0}", e.Message);
                 return 1;
-            } 
+            }
         }
 
         public static string VersionInfo()
@@ -122,7 +122,7 @@ namespace cba
             GlobalConfig.corralStartTime = DateTime.Now;
         }
 
-        public static int run(string[] args) 
+        public static int run(string[] args)
         {
             ////////////////////////////////////
             // Input and initialization phase
@@ -282,7 +282,7 @@ namespace cba
                     }
                     else
                     {
-                        if(!config.noTraceOnDisk)
+                        if (!config.noTraceOnDisk)
                             PrintConcurrentProgramPath.print(inputProg, cexTrace, traceName);
 
                         var init = BoogieUtil.ReadAndOnlyResolve(config.inputFile);
@@ -339,7 +339,7 @@ namespace cba
             acmd.Expr = Expr.False;
 
             // Disable assignment to assertsPassed (for better mod-set invariants)
-            for(int i = 0; i < location.Item2.Cmds.Count; i++) 
+            for (int i = 0; i < location.Item2.Cmds.Count; i++)
             {
                 var cmd = location.Item2.Cmds[i] as AssignCmd;
                 if (cmd == null) continue;
@@ -378,7 +378,7 @@ namespace cba
             {
                 throw new InvalidInput("Implementation of main procedure not found");
             }
-            
+
             if (SequentialInstrumentation.isSingleThreadProgram(init, config.mainProcName))
             {
                 GlobalConfig.isSingleThreaded = true;
@@ -397,8 +397,8 @@ namespace cba
             // CodeExpr support
             PreProcessCodeExpr(init);
 
-            foreach(var decl in init.TopLevelDeclarations)
-                    decl.Attributes = BoogieUtil.removeAttr("inline", decl.Attributes);
+            foreach (var decl in init.TopLevelDeclarations)
+                decl.Attributes = BoogieUtil.removeAttr("inline", decl.Attributes);
 
             // Add unique ids on calls
             var addIds = new AddUniqueCallIds();
@@ -429,7 +429,7 @@ namespace cba
 
             var inputProg = new PersistentCBAProgram(init, config.mainProcName, GlobalConfig.isSingleThreaded ? 1 : config.contextBound);
             ProgTransformation.PersistentProgram.FreeParserMemory();
-            
+
             return inputProg;
         }
 
@@ -544,7 +544,8 @@ namespace cba
                 bool success =
                     CBADriver.checkProgram(ref prog, refinementState.getVars(), true, out counterexample, out tinfo, out cexTrace);
 
-                if (success) {
+                if (success)
+                {
                     Log.WriteLine("Program has no bugs");
                     if (CBADriver.reachedBound)
                     {
@@ -576,7 +577,7 @@ namespace cba
                 // We've found a bug
                 if (!outcomeSuccess) break;
             }
-            
+
             refinementState.Pop();
 
             return outcomeSuccess;
@@ -588,7 +589,7 @@ namespace cba
             RefinementState refinementState, out ErrorTrace cexTrace)
         {
             BoogieVerify.setTimeOut(GlobalConfig.getTimeLeft());
-            
+
             // Check if counterexample is valid
             var success = CBADriver.checkPath(counterexample, counterexample.allVars, out cexTrace);
 

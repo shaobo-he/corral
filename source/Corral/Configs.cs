@@ -49,7 +49,7 @@ namespace cba
 
         public ArrayTheoryOptions arrayTheory { get; private set; }
 
-        public int printData {get; set;}
+        public int printData { get; set; }
 
         public int timeout { get; private set; }
 

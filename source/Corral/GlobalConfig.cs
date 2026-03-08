@@ -74,10 +74,10 @@ namespace cba
         public static uint getTimeLeft()
         {
             if (timeOut == 0) return 0;
-            var ret = timeOut - (int) ((DateTime.Now - corralStartTime).TotalSeconds);
+            var ret = timeOut - (int)((DateTime.Now - corralStartTime).TotalSeconds);
             if (ret <= 0) ret = 1; // KLM: prevent ret from being negative
             // if (ret == 0) ret = 1;
-            return (uint) ret;
+            return (uint)ret;
         }
 
         public static bool timeOutReached()

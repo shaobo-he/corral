@@ -33,7 +33,7 @@ namespace cba
             //////
             // These are the compilation phases         
             //////
-            
+
             VariableSlicePass cp1 = new VariableSlicePass(trackedVars);
             curr = cp1.run(curr);
 
@@ -68,7 +68,7 @@ namespace cba
                 var traceProgCons = new RestrictToTrace(cp1.input.getProgram(), tinfo);
                 ErrorTrace.fillInContextSwitchInfo(trace1);
                 traceProgCons.addTrace(trace1);
-                
+
                 pout =
                     new PersistentCBAProgram(traceProgCons.getProgram(),
                         traceProgCons.getFirstNameInstance(cp1.getInput().mainProcName),
