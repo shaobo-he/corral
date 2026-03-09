@@ -53,6 +53,15 @@ namespace cba.Util
 
         public static void DoModSetAnalysis(Program p)
         {
+            // Boogie 3.5.6 ModSetCollector uses callCmd.Proc (Procedure object) as a dictionary key.
+            // FixedDuplicator sets Proc=null when retainProcCalls=false, so re-resolve before analysis.
+            var procByName = p.TopLevelDeclarations.OfType<Procedure>()
+                .ToDictionary(proc => proc.Name);
+            foreach (var impl in p.TopLevelDeclarations.OfType<Implementation>())
+                foreach (var block in impl.Blocks)
+                    foreach (var cmd in block.Cmds.OfType<CallCmd>())
+                        if (cmd.Proc == null && procByName.TryGetValue(cmd.callee, out var proc))
+                            cmd.Proc = proc;
             (new ModSetCollector(BoogieOptions)).CollectModifies(p);
         }
 
