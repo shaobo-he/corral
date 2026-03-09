@@ -102,6 +102,9 @@ namespace cba
             // TypeEncodingMethod = Monomorphic makes UseArrayTheory true by default in Boogie 3.5.6
             // (/useArrayTheory flag was removed; it is now the computed default)
             BoogieUtil.BoogieOptions.TypeEncodingMethod = CoreOptions.TypeEncoding.Monomorphic;
+            // Boogie 3.5.6 CheckAssumptions always calls (get-unsat-core) on Valid results;
+            // enable unsat core production so z3 doesn't reject the request
+            BoogieUtil.BoogieOptions.EnableUnSatCoreExtract = 1;
 
             InstrumentationConfig.UseOldInstrumentation = false;
             VariableSlicing.UseSimpleSlicing = false;
