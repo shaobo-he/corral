@@ -1032,7 +1032,7 @@ namespace cba.Util
                     else if (tmp.Name == impl.Name)
                     {
                         Procedure pex = new Procedure(Token.NoToken, tmp.Name + "_cex", tmp.TypeParameters, tmp.InParams,
-                            tmp.OutParams, false, tmp.Requires, null, tmp.Ensures, tmp.Modifies, tmp.Attributes);
+                            tmp.OutParams, false, tmp.Requires, new List<Requires>(), tmp.Ensures, tmp.Modifies, tmp.Attributes);
                         newProg.AddTopLevelDeclaration(pex);
                     }
                 }

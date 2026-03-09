@@ -213,7 +213,7 @@ namespace cba
             ensures.Add(e3);
 
             csProc = new Procedure(Token.NoToken, csProcName, new List<TypeVariable>(), new List<Variable>(), new List<Variable>(),
-                                   false, new List<Requires>(), null, ensures, mods);
+                                   false, new List<Requires>(), new List<Requires>(), ensures, mods);
 
             return csProc;
 

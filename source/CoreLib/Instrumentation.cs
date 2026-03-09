@@ -2368,7 +2368,7 @@ namespace cba
                     new Procedure(
                         Token.NoToken, LanguageSemantics.assertNotReachableName(),
                         new List<TypeVariable>(), new List<Variable>(), new List<Variable>(),
-                        false, new List<Requires>(), null, new List<Ensures>(), new List<IdentifierExpr>()));
+                        false, new List<Requires>(), new List<Requires>(), new List<Ensures>(), new List<IdentifierExpr>()));
 
             }
             else

@@ -188,7 +188,7 @@ namespace cba
                 inv.Add(new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "x", Microsoft.Boogie.Type.Int), true));
 
                 intDecl = new Procedure(Token.NoToken, recordIntArgProc, new List<TypeVariable>(), inv, new List<Variable>(), false, new List<Requires>(),
-                    null, new List<Ensures>(), new List<IdentifierExpr>());
+                    new List<Requires>(), new List<Ensures>(), new List<IdentifierExpr>());
 
                 program.AddTopLevelDeclaration(intDecl);
             }
@@ -200,7 +200,7 @@ namespace cba
                 inv.Add(new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "x", Microsoft.Boogie.Type.Bool), true));
 
                 boolDecl = new Procedure(Token.NoToken, recordBoolArgProc, new List<TypeVariable>(), inv, new List<Variable>(), false, new List<Requires>(),
-                    null, new List<Ensures>(), new List<IdentifierExpr>());
+                    new List<Requires>(), new List<Ensures>(), new List<IdentifierExpr>());
 
                 program.AddTopLevelDeclaration(boolDecl);
             }
@@ -1379,7 +1379,7 @@ namespace cba
             // create a new main
             var newMainProc = new Procedure(Token.NoToken, "daFakeMain", new List<TypeVariable>(main.Proc.TypeParameters),
                 new List<Variable>(main.Proc.InParams), new List<Variable>(main.Proc.OutParams), false,
-                new List<Requires>(main.Proc.Requires), null, new List<Ensures>(main.Proc.Ensures), new List<IdentifierExpr>());
+                new List<Requires>(main.Proc.Requires), new List<Requires>(), new List<Ensures>(main.Proc.Ensures), new List<IdentifierExpr>());
 
             var newMainImpl = new Implementation(Token.NoToken, "daFakeMain", new List<TypeVariable>(main.TypeParameters),
                 new List<Variable>(main.InParams), new List<Variable>(main.OutParams), new List<Variable>(), new List<Block>());
