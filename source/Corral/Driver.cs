@@ -89,28 +89,27 @@ namespace cba
 
             boogieOptions += "/extractLoops /errorLimit:1 ";
 
-            boogieOptions += string.Format("/recursionBound:{0} ", config.recursionBound);
-
-            // Initialize Boogie
-            BoogieUtil.BoogieOptions.PrintInstrumented = true;
-            BoogieUtil.BoogieOptions.ProcedureInlining = CoreOptions.Inlining.Assume;
-            BoogieUtil.BoogieOptions.TypeEncodingMethod = CoreOptions.TypeEncoding.Monomorphic;
-
-            // /noRemoveEmptyBlocks is needed for field refinement. It ensures that
+            // /recursionBound was removed from Boogie 3.5.6's option parser; set directly
+            // /removeEmptyBlocks is needed for field refinement. It ensures that
             // we get an actual path in the program (so that we can concretize it)
             boogieOptions +=
                 "/removeEmptyBlocks:0 /coalesceBlocks:0 " +
                 "/subsumption:0 ";
 
+            // Initialize Boogie
+            BoogieUtil.BoogieOptions.PrintInstrumented = true;
+            BoogieUtil.BoogieOptions.ProcedureInlining = CoreOptions.Inlining.Assume;
+            // TypeEncodingMethod = Monomorphic makes UseArrayTheory true by default in Boogie 3.5.6
+            // (/useArrayTheory flag was removed; it is now the computed default)
+            BoogieUtil.BoogieOptions.TypeEncodingMethod = CoreOptions.TypeEncoding.Monomorphic;
+
             InstrumentationConfig.UseOldInstrumentation = false;
             VariableSlicing.UseSimpleSlicing = false;
             InstrumentationConfig.raiseExceptionBeforeAllProcedures = false;
 
-            if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.STRONG)
-                boogieOptions += " /useArrayTheory";
-            else if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK)
+            if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK)
             {
-                boogieOptions += " /useArrayTheory";
+                // WEAK: use array theory (default) but disable extensionality
                 boogieOptions += " /proverOpt:O:smt.array.extensional=false";
             }
 
