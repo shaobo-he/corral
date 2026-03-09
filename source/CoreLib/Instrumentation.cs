@@ -370,7 +370,7 @@ namespace cba
             {
                 if (policy.hasGlobalVarsToInstrument(en.Condition))
                 {
-                    en.Condition.Emit(new TokenTextWriter(Console.Out));
+                    en.Condition.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions));
                     throw new InternalError("Cannot yet instrument ensures annotations that have global variables");
                 }
                 // convert expr to: !assertsPassed || expr
@@ -382,7 +382,7 @@ namespace cba
             {
                 if (policy.hasGlobalVarsToInstrument(re.Condition))
                 {
-                    re.Condition.Emit(new TokenTextWriter(Console.Out));
+                    re.Condition.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions));
                     throw new InternalError("Cannot yet instrument requires annotations that have global variables");
                 }
             }
@@ -652,7 +652,7 @@ namespace cba
 
                     if (policy.hasOldGlobalVarsToInstrument(cmd))
                     {
-                        cmd.Emit(new TokenTextWriter(Console.Out), 0);
+                        cmd.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                         throw new InternalError("Cannot yet handle \"old\" variables");
                     }
 
@@ -774,7 +774,7 @@ namespace cba
                 var src = blk.Label;
                 var gc = blk.TransferCmd as GotoCmd;
                 if (gc == null) continue;
-                foreach (string tgt in gc.labelNames)
+                foreach (string tgt in gc.LabelNames)
                 {
                     if (!preds.ContainsKey(tgt)) preds.Add(tgt, new HashSet<string>());
                     preds[tgt].Add(src);
@@ -797,7 +797,7 @@ namespace cba
                 var acmd = blk.Cmds[0] as AssumeCmd;
                 if (acmd == null) continue;
 
-                if (!QKeyValue.FindBoolAttribute(acmd.Attributes, "do_re")) continue;
+                if (QKeyValue.FindAttribute(acmd.Attributes, attr => attr.Key == "do_re") == null) continue;
 
                 if (!preds.ContainsKey(blk.Label)) continue;
                 if(preds[blk.Label].Count != 1) continue;
@@ -806,10 +806,10 @@ namespace cba
                 var gc = unique_pred.TransferCmd as GotoCmd;
                 Debug.Assert(gc != null);
 
-                if (gc.labelNames.Count != 2) continue;
+                if (gc.LabelNames.Count != 2) continue;
 
-                var lab2 = gc.labelNames[0];
-                if (lab2 == blk.Label) lab2 = gc.labelNames[1];
+                var lab2 = gc.LabelNames[0];
+                if (lab2 == blk.Label) lab2 = gc.LabelNames[1];
                 Debug.Assert(lab2 != blk.Label);
 
                 var block2 = nameBlockMap[lab2];
@@ -820,7 +820,7 @@ namespace cba
                 if (!checkNegation(acmd.Expr, acmd2.Expr)) continue;
 
                 // Remove attribute
-                Debug.Assert(QKeyValue.FindBoolAttribute(acmd2.Attributes, "do_re"));
+                Debug.Assert(QKeyValue.FindAttribute(acmd2.Attributes, attr => attr.Key == "do_re") != null);
                 Debug.Assert(acmd2.Attributes.Key == "do_re");
                 Debug.Assert(acmd.Attributes.Key == "do_re");
 
@@ -831,10 +831,10 @@ namespace cba
             // Remove annotations on assumes that are the first in a widening block
             foreach (var blk in impl.Blocks)
             {
-                if (!blk.widenBlock) continue;
+                if (!blk.WidenBlock) continue;
                 if (blk.Cmds.Count == 0) continue;
                 var acmd = blk.Cmds[0] as AssumeCmd;
-                if (acmd == null || !QKeyValue.FindBoolAttribute(acmd.Attributes, "do_re")) continue;
+                if (acmd == null || QKeyValue.FindAttribute(acmd.Attributes, attr => attr.Key == "do_re") == null) continue;
                 Debug.Assert(acmd.Attributes.Key == "do_re");
                 acmd.Attributes = acmd.Attributes.Next;
             }
@@ -913,7 +913,7 @@ namespace cba
                 int incnt = -1;
 
                 // If this is a widening block, add raiseException
-                if (block.widenBlock && !InstrumentationConfig.cooperativeYield)
+                if (block.WidenBlock && !InstrumentationConfig.cooperativeYield)
                 {
                     curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
                     curr = new List<Cmd>();
@@ -1022,13 +1022,13 @@ namespace cba
 
                     if (policy.hasOldGlobalVarsToInstrument(cmd))
                     {
-                        cmd.Emit(new TokenTextWriter(Console.Out), 0);
+                        cmd.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                         throw new InternalError("Cannot yet handle \"old\" variables");
                     }
 
                     // raise exception before blocking assumes
                     var assumecmd = cmd as AssumeCmd;
-                    if (assumecmd != null && QKeyValue.FindBoolAttribute(assumecmd.Attributes, "do_re") && !InstrumentationConfig.cooperativeYield)
+                    if (assumecmd != null && QKeyValue.FindAttribute(assumecmd.Attributes, attr => attr.Key == "do_re") != null && !InstrumentationConfig.cooperativeYield)
                     {
                         curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
                         curr = new List<Cmd>();
@@ -1545,13 +1545,13 @@ namespace cba
 
             // build an inverted block map for the implementation
             var preds = new Dictionary<string, HashSet<string>>();
-            blockMap.Keys.Iter(st => preds.Add(st, new HashSet<string>()));
+            foreach (var st in blockMap.Keys) preds.Add(st, new HashSet<string>());
 
             foreach (var blk in impl.Blocks)
             {
                 var gc = blk.TransferCmd as GotoCmd;
                 if (gc == null) continue;
-                foreach (string tgt in gc.labelNames) preds[tgt].Add(blk.Label);
+                foreach (string tgt in gc.LabelNames) preds[tgt].Add(blk.Label);
             }
 
             var ret = new HashSet<string>();
@@ -2368,7 +2368,7 @@ namespace cba
                     new Procedure(
                         Token.NoToken, LanguageSemantics.assertNotReachableName(),
                         new List<TypeVariable>(), new List<Variable>(), new List<Variable>(),
-                        new List<Requires>(), new List<IdentifierExpr>(), new List<Ensures>()));
+                        false, new List<Requires>(), null, new List<Ensures>(), new List<IdentifierExpr>()));
 
             }
             else
@@ -2818,8 +2818,8 @@ namespace cba
             // backward call graph
             var callGraph = new Dictionary<string, HashSet<string>>();
             
-            program.TopLevelDeclarations.OfType<Procedure>().Iter(
-                proc => callGraph.Add(proc.Name, new HashSet<string>()));
+            foreach (var proc in program.TopLevelDeclarations.OfType<Procedure>())
+                callGraph.Add(proc.Name, new HashSet<string>());
 
             foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
             {
@@ -2894,14 +2894,6 @@ namespace cba
                                 continue;
                             }
                             currCmds.Add(BoogieAstFactory.MkVarEqConst(outv.Decl, 1));
-                            addedTrans(impl.Name, blk.Label, incnt, cmd, currLabel, currCmds);
-                            continue;
-                        }
-
-                        // Remove yield statements
-                        if (cmd is YieldCmd)
-                        {
-                            currCmds.Add(BoogieAstFactory.MkAssume(Expr.True));
                             addedTrans(impl.Name, blk.Label, incnt, cmd, currLabel, currCmds);
                             continue;
                         }

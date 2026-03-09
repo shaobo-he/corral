@@ -570,7 +570,7 @@ namespace cba.Util
                 node = this.VisitDeclWithFormals((DeclWithFormals)node);
             else
             {
-                node.Emit(new TokenTextWriter(Console.Out), 0);
+                node.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                 throw new InvalidInput("Unknown declaration type");
             }
 
@@ -591,7 +591,7 @@ namespace cba.Util
                 node = this.VisitProcedure((Procedure)node);
             else
             {
-                node.Emit(new TokenTextWriter(Console.Out), 0);
+                node.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                 throw new InvalidInput("Unknown declaration type");
             }
 
@@ -756,7 +756,7 @@ namespace cba.Util
                 node = this.VisitDeclWithFormals((DeclWithFormals)node);
             else
             {
-                node.Emit(new TokenTextWriter(Console.Out), 0);
+                node.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                 throw new InvalidInput("Unknown declaration type");
             }
 
@@ -886,7 +886,7 @@ namespace cba.Util
         public override BinderExpr VisitBinderExpr(BinderExpr node)
         {
             add(node);
-            return base.VisitBinderExpr(node);
+            return (BinderExpr)base.VisitBinderExpr(node);
         }
 
         public override Block VisitBlock(Block node)
@@ -1030,7 +1030,7 @@ namespace cba.Util
         public override MapType VisitMapType(MapType node)
         {
             add(node);
-            return base.VisitMapType(node);
+            return (MapType)base.VisitMapType(node);
         }
 
         public override Expr VisitNAryExpr(NAryExpr node)
@@ -1143,8 +1143,8 @@ namespace cba.Util
             var rv = new RemoveVarsFromAttributes();
 
             // Find declared globals
-            program.TopLevelDeclarations.OfType<Variable>()
-                .Iter(v => rv.globals.Add(v.Name));
+            foreach (var v in program.TopLevelDeclarations.OfType<Variable>())
+                rv.globals.Add(v.Name);
             rv.declared = rv.globals;
 
             rv.VisitProgram(program);
@@ -1168,7 +1168,7 @@ namespace cba.Util
         public override Implementation VisitImplementation(Implementation node)
         {
             locals = new HashSet<string>();
-            node.LocVars.Iter(v => locals.Add(v.Name));
+            foreach (var v in node.LocVars) locals.Add(v.Name);
             
             declared = new HashSet<string>(globals);
             declared.UnionWith(locals);
@@ -1198,7 +1198,7 @@ namespace cba.Util
         {
             if (attr == null) return null;
             var vu = new VarsUsed();
-            attr.Params.Where(e => e is Expr).Iter(e => vu.VisitExpr(e as Expr));
+            foreach (var e in attr.Params.Where(e => e is Expr)) vu.VisitExpr(e as Expr);
             if (!vu.varsUsed.IsSubsetOf(vars))
                 return attr.Next;
             attr.Next = Remove(attr.Next, vars);
@@ -1262,7 +1262,7 @@ namespace cba.Util
                 _anyExprMode = true;
 
                 _toConsume.Pop();
-                ((NAryExpr)_toConsume.Peek()).Args.Reverse().Iter(arg => _toConsume.Push(arg));
+                foreach (var arg in ((NAryExpr)_toConsume.Peek()).Args.AsEnumerable().Reverse()) _toConsume.Push(arg);
                 var result = VisitNAryExpr(node);
 
                 _anyExprMode = false;
@@ -1299,7 +1299,7 @@ namespace cba.Util
             if (naeToConsume.Fun.FunctionName == node.Fun.FunctionName)
             {
                 _toConsume.Pop();
-                naeToConsume.Args.Reverse().Iter(arg => _toConsume.Push(arg));
+                foreach (var arg in naeToConsume.Args.AsEnumerable().Reverse()) _toConsume.Push(arg);
                 return base.VisitNAryExpr(node);
             }
             // the function in toConsume has a declaration in TemplateVariables
@@ -1337,7 +1337,7 @@ namespace cba.Util
                 FunctionSubstitution.Add(naeToConsume.Fun.FunctionName, node.Fun);
 
                 _toConsume.Pop();
-                naeToConsume.Args.Reverse().Iter(arg => _toConsume.Push(arg));
+                foreach (var arg in naeToConsume.Args.AsEnumerable().Reverse()) _toConsume.Push(arg);
                 return base.VisitNAryExpr(node);
             }
             Matches = false;
@@ -1361,7 +1361,7 @@ namespace cba.Util
                 _anyExprMode = true;
 
                 _toConsume.Pop();
-                ((NAryExpr)_toConsume.Peek()).Args.Iter(arg => _toConsume.Push(arg));
+                foreach (var arg in ((NAryExpr)_toConsume.Peek()).Args) _toConsume.Push(arg);
                 var result = VisitIdentifierExpr(node);
 
                 _anyExprMode = false;
@@ -1417,7 +1417,7 @@ namespace cba.Util
                 _anyExprMode = true;
 
                 _toConsume.Pop();
-                ((NAryExpr)_toConsume.Peek()).Args.Iter(arg => _toConsume.Push(arg));
+                foreach (var arg in ((NAryExpr)_toConsume.Peek()).Args) _toConsume.Push(arg);
                 var result = VisitLiteralExpr(node);
 
                 _anyExprMode = false;

@@ -133,7 +133,7 @@ namespace cba
         // Is this command a yield?
         public bool isYield(Cmd cmd)
         {
-            return cmd is YieldCmd;
+            return false; // YieldCmd removed in Boogie 3.5.6
         }
 
         public bool isFixedContextProc(Cmd cmd, ref int i)

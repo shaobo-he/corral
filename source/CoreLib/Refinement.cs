@@ -89,7 +89,7 @@ namespace cba
             var elim = new UnReadVarEliminator();
             prog = elim.run(prog);
             var globalsRead = new HashSet<string>();
-            BoogieUtil.GetGlobalVariables(prog).Iter(v => globalsRead.Add(v.Name));
+            foreach (var v in BoogieUtil.GetGlobalVariables(prog)) globalsRead.Add(v.Name);
 
             BoogieUtil.DoModSetAnalysis(prog);
             HashSet<string> globalsModified = new HashSet<string>();
@@ -228,9 +228,9 @@ namespace cba
 
             var p = upperProg.getCBAProgram();
             
-            if (p.Typecheck() != 0)
+            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
             {
-                p.Emit(new TokenTextWriter("error.bpl"));
+                p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
                 throw new InternalError("Type errors");
             }
             //BoogieUtil.PrintProgram(p, "RefineUp.bpl");
@@ -246,7 +246,7 @@ namespace cba
             //faProg.writeToFile("error.bpl");
             faProgProg = faProg.getProgram();
 
-            var t = faProgProg.Typecheck();
+            var t = faProgProg.Typecheck(BoogieUtil.BoogieOptions);
             Debug.Assert(t == 0);
 
             //BoogieUtil.PrintProgram(faProgProg, "refine.bpl");
@@ -305,9 +305,9 @@ namespace cba
             var upperProg = vp1.run(program);
 
             var p = upperProg.getCBAProgram();
-            if (p.Typecheck() != 0)
+            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
             {
-                p.Emit(new TokenTextWriter("error.bpl"));
+                p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
                 throw new InternalError("Type errors");
             }
 
@@ -319,7 +319,7 @@ namespace cba
 
             var faProgProg = faProg.getProgram();
 
-            var t = faProgProg.Typecheck();
+            var t = faProgProg.Typecheck(BoogieUtil.BoogieOptions);
             Debug.Assert(t == 0);
 
             boolVars = BoogieVerify.FindLeastToVerify(faProgProg, boolVars);
@@ -822,9 +822,8 @@ namespace cba
 
             //addFakeMain(program, BoogieUtil.findProcedureImpl(program.TopLevelDeclarations, program.mainProcName));
 
-            program.TopLevelDeclarations
-                .OfType<Implementation>()
-                .Iter(pruneFalseBlocks);
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                pruneFalseBlocks(impl);
 
             return new PersistentProgram(program);
         }
@@ -836,30 +835,27 @@ namespace cba
                 .Where(blk => blk != impl.Blocks[0] && blk.Cmds.Count > 0 && BoogieUtil.isAssumeFalse(blk.Cmds[0]));
 
             var toPrune = new HashSet<string>();
-            blocks.Iter(blk => toPrune.Add(blk.Label));
+            foreach (var blk in blocks) toPrune.Add(blk.Label);
 
             // Prune
             var newBlocks = new List<Block>();
-            impl.Blocks
-                .Filter(blk => !toPrune.Contains(blk.Label))
-                .Iter(blk => newBlocks.Add(blk));
+            foreach (var blk in impl.Blocks.Where(blk => !toPrune.Contains(blk.Label)))
+                newBlocks.Add(blk);
 
             Debug.Assert(newBlocks[0] == impl.Blocks[0]);
 
             impl.Blocks = newBlocks;
 
             // Change goto commands
-            foreach (var blk in impl.Blocks.Filter(blk => blk.TransferCmd is GotoCmd))
+            foreach (var blk in impl.Blocks.Where(blk => blk.TransferCmd is GotoCmd))
             {
                 var gc = blk.TransferCmd as GotoCmd;
                 var ss = new List<String>();
 
-                gc.labelNames
-                    .OfType<string>()
-                    .Where(l => !toPrune.Contains(l))
-                    .Iter(l => ss.Add(l));
+                foreach (var l in gc.LabelNames.OfType<string>().Where(l => !toPrune.Contains(l)))
+                    ss.Add(l);
 
-                gc.labelNames = ss;
+                gc.LabelNames = ss;
             }
 
 
@@ -920,8 +916,8 @@ namespace cba
 
             // Create new main procedure
             var newMainProc = new Procedure(Token.NoToken, "fakeMain", oldMainProc.TypeParameters,
-                oldMainProc.InParams, oldMainProc.OutParams, oldMainProc.Requires,
-                oldMainProc.Modifies, oldMainProc.Ensures);
+                oldMainProc.InParams, oldMainProc.OutParams, false, oldMainProc.Requires,
+                null, oldMainProc.Ensures, oldMainProc.Modifies);
 
             var newMainImpl = new Implementation(Token.NoToken, "fakeMain", oldMainImpl.TypeParameters,
                 oldMainImpl.InParams, oldMainImpl.OutParams, new List<Variable>(), new List<Block>());
@@ -1113,7 +1109,7 @@ namespace cba
                         if (lhs is MapAssignLhs)
                         {
                             varsUsed = new VarsUsed();
-                            (lhs as MapAssignLhs).Indexes.Iter(e => varsUsed.Visit(e));
+                            foreach (var e in (lhs as MapAssignLhs).Indexes) varsUsed.Visit(e);
                             var choice2 = getAllTrackedExpr(varsUsed.globalsUsed, impl.Name);
                             addChoice2(ref newBlocks, acmd, choice2, ref currLabel, ref currCmds, endLabel);
                         }
@@ -1334,8 +1330,8 @@ namespace cba
             var procs = BoogieUtil.GetProcedures(instrumentedProg);
             mainProcName = (inst.input as PersistentCBAProgram).mainProcName;
 
-            globals.Iter(g => allVars.Add(g.Name));
-            procs.Iter(p => allProcs.Add(p.Name));
+            foreach (var g in globals) allVars.Add(g.Name);
+            foreach (var p in procs) allProcs.Add(p.Name);
 
             newProcsAdded = inst.getInstrumentedProcedures();
 
@@ -1475,9 +1471,9 @@ namespace cba
             // Get hold of variables that were deleted
             var outProg = cp.output.getProgram();
             var inGlobals = new HashSet<string>();
-            BoogieUtil.GetGlobalVariables(inProg).Iter(g => inGlobals.Add(g.Name));
+            foreach (var g in BoogieUtil.GetGlobalVariables(inProg)) inGlobals.Add(g.Name);
             var outGlobals = new HashSet<string>();
-            BoogieUtil.GetGlobalVariables(outProg).Iter(g => outGlobals.Add(g.Name));
+            foreach (var g in BoogieUtil.GetGlobalVariables(outProg)) outGlobals.Add(g.Name);
             varsDeleted = inGlobals.Difference(outGlobals);
            
         }

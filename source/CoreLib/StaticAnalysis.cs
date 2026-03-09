@@ -33,33 +33,28 @@ namespace StaticAnalysis
             computeTime = TimeSpan.Zero;
 
             // Make all the graphs
-            program.TopLevelDeclarations
-                .OfType<Implementation>()
-                .Iter(impl => intraGraphs.Add(
-                    new IntraGraph(impl, iw, p =>
-                        {
-                            if (!id2Graph.ContainsKey(p)) return null;
-                            else return id2Graph[p].summary;
-                        }
-            )));
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                intraGraphs.Add(new IntraGraph(impl, iw, p =>
+                    {
+                        if (!id2Graph.ContainsKey(p)) return null;
+                        else return id2Graph[p].summary;
+                    }
+                ));
 
-            intraGraphs.Iter(g => id2Graph.Add(g.Id, g));
+            foreach (var g in intraGraphs) id2Graph.Add(g.Id, g);
 
-            intraGraphs.Iter(g =>
+            foreach (var g in intraGraphs)
             {
                 Succ.Add(g.Id, new HashSet<IntraGraph>());
                 Pred.Add(g.Id, new HashSet<IntraGraph>());
-            });
+            }
 
-            intraGraphs.Iter(g =>
-                g.Callees
-                .Where(s => id2Graph.ContainsKey(s))
-                .Iter(s =>
-                    {
-                        Succ[g.Id].Add(id2Graph[s]);
-                        Pred[s].Add(g);
-                    }
-            ));
+            foreach (var g in intraGraphs)
+                foreach (var s in g.Callees.Where(s => id2Graph.ContainsKey(s)))
+                {
+                    Succ[g.Id].Add(id2Graph[s]);
+                    Pred[s].Add(g);
+                }
 
             // assign priorities
             var sccs = new StronglyConnectedComponents<IntraGraph>(
@@ -78,7 +73,7 @@ namespace StaticAnalysis
                     scc.Iter(g => Console.WriteLine("{0}", g.Id));
                 }
                 */
-                scc.Iter(g => g.priority = priority);
+                foreach (var g in scc) g.priority = priority;
                 priority--;
             }
 
@@ -89,7 +84,7 @@ namespace StaticAnalysis
             var begin = DateTime.Now;
 
             var worklist = new SortedSet<IntraGraph>(intraGraphs.First());
-            intraGraphs.Iter(g => worklist.Add(g));
+            foreach (var g in intraGraphs) worklist.Add(g);
 
             while (worklist.Any())
             {
@@ -99,7 +94,7 @@ namespace StaticAnalysis
                 proc.Compute();
                 if (proc.summaryChanged)
                 {
-                    Pred[proc.Id].Iter(g => worklist.Add(g));
+                    foreach (var g in Pred[proc.Id]) worklist.Add(g);
                 }
             }
 
@@ -233,7 +228,7 @@ namespace StaticAnalysis
 
             }
 
-            Nodes.Iter(n => idToNode.Add(n.Id, n));
+            foreach (var n in Nodes) idToNode.Add(n.Id, n);
             entryNode = idToNode[impl.Blocks[0].Label + "::in"];
 
             // connecting edges
@@ -244,12 +239,12 @@ namespace StaticAnalysis
 
                 var src = idToNode[block.Label + "::out"];
 
-                var edges = gc.labelNames
+                var edges = gc.LabelNames
                     .OfType<string>()
                     .Select(s => idToNode[s + "::in"])
                     .Select(tgt => new Edge(src, tgt, new Cmd[] { }));
 
-                edges.Iter(e => { Edges.Add(e); e.src.AddEdge(e); e.tgt.AddEdge(e); });
+                foreach (var e in edges) { Edges.Add(e); e.src.AddEdge(e); e.tgt.AddEdge(e); }
 
             }
             
@@ -262,7 +257,7 @@ namespace StaticAnalysis
             int p = 0;
             foreach (var scc in sccs)
             {
-                scc.Iter(n => n.priority = p);
+                foreach (var n in scc) n.priority = p;
                 p++;
             }
         }
@@ -284,7 +279,7 @@ namespace StaticAnalysis
             }
             else
             {
-                updatedCallees.Iter(c => calleeToEdgeSrc[c].Iter(n => worklist.Add(n)));
+                foreach (var c in updatedCallees) foreach (var n in calleeToEdgeSrc[c]) worklist.Add(n);
             }
             
             computedBefore = true;

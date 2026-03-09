@@ -113,40 +113,37 @@ namespace cba
             var start = DateTime.Now;
 
             // remove non-free ensures and requires
-            program.TopLevelDeclarations.OfType<Procedure>()
-                .Iter(proc => proc.Ensures = proc.Ensures.Filter(en => en.Free));
-            program.TopLevelDeclarations.OfType<Procedure>()
-                .Iter(proc => proc.Requires = proc.Requires.Filter(en => en.Free));
+            foreach (var proc in program.TopLevelDeclarations.OfType<Procedure>())
+                proc.Ensures = proc.Ensures.Where(en => en.Free).ToList();
+            foreach (var proc in program.TopLevelDeclarations.OfType<Procedure>())
+                proc.Requires = proc.Requires.Where(en => en.Free).ToList();
             // remove assertions
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl => impl.Blocks
-                    .Iter(blk => blk.Cmds = blk.Cmds.Map(c =>
-                        {
-                            var ac = c as AssertCmd;
-                            if (ac == null) return c;
-                            return new AssumeCmd(ac.tok, /*ac.Expr*/ Expr.True, ac.Attributes);
-                        })));
-            // delete yield
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl => impl.Blocks
-                    .Iter(blk => blk.Cmds.RemoveAll(c => c is YieldCmd)));
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                foreach (var blk in impl.Blocks)
+                    blk.Cmds = blk.Cmds.Select(c =>
+                    {
+                        var ac = c as AssertCmd;
+                        if (ac == null) return c;
+                        return (Cmd)new AssumeCmd(ac.tok, Expr.True, ac.Attributes);
+                    }).ToList();
+            // delete yield (YieldCmd removed in Boogie 3.5.6; no-op for sequential programs)
 
             // Call graph
             ComputeCallGraph(program);
 
             // Gather the set of implementations with "loop" inside their name
             var allLoopImpls = new List<Implementation>();
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl => { if (impl.Name.Contains("loop")) allLoopImpls.Add(impl); });
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                if (impl.Name.Contains("loop")) allLoopImpls.Add(impl);
 
             // Prune to the right form
-            var loopImpls = allLoopImpls.Filter(CheckImpl);
+            var loopImpls = allLoopImpls.Where(CheckImpl).ToList();
 
             #region Process user annotations
 
             // Include user anntations
             var allLoops = new HashSet<string>();
-            loopImpls.Iter(impl => allLoops.Add(impl.Name));
+            foreach (var impl in loopImpls) allLoops.Add(impl.Name);
             foreach (var sp in UserAnnotations
                 .Where(s => s.StartsWith("LB:"))
                 .Select(s => s.Split(':'))
@@ -164,7 +161,7 @@ namespace cba
                 loopBounds[sp[1]] = bound;
                 Console.WriteLine("LB: Loop {0} requires minimum {1} iterations (annotated)", sp[1], bound);
             }
-            loopImpls = loopImpls.Filter(impl => !loopBounds.ContainsKey(impl.Name));
+            loopImpls = loopImpls.Where(impl => !loopBounds.ContainsKey(impl.Name)).ToList();
             #endregion
 
             if (loopImpls.Count == 0)
@@ -178,8 +175,8 @@ namespace cba
             BoogieVerify.PrintImplsBeingVerified = true;
 
             // Set rec. bound
-            var oldBound = CommandLineOptions.Clo.RecursionBound;
-            CommandLineOptions.Clo.RecursionBound = maxBound;
+            var oldBound = BoogieUtil.RecursionBound;
+            BoogieUtil.RecursionBound = maxBound;
 
             // Query
             var allErrors = new List<BoogieErrorTrace>();
@@ -193,7 +190,7 @@ namespace cba
                 Console.WriteLine("LB: Loop {0} requires minimum {1} iterations", loopName, bound);
             }
 
-            CommandLineOptions.Clo.RecursionBound = oldBound;
+            BoogieUtil.RecursionBound = oldBound;
             BoogieVerify.PrintImplsBeingVerified = false;
             timeTaken = (DateTime.Now - start);
 
@@ -211,9 +208,9 @@ namespace cba
 
         public static void AddLoopBounds(Program program, Dictionary<string, int> extraRecBounds)
         {
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Where(impl => extraRecBounds.ContainsKey(impl.Name))
-                .Iter(impl => impl.AddAttribute(BoogieVerify.ExtraRecBoundAttr, Expr.Literal(extraRecBounds[impl.Name])));
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>()
+                .Where(impl => extraRecBounds.ContainsKey(impl.Name)))
+                impl.AddAttribute(BoogieVerify.ExtraRecBoundAttr, Expr.Literal(extraRecBounds[impl.Name]));
         }
 
         private static int RecBound(string recFunc, Counterexample trace, string traceName)
@@ -230,10 +227,10 @@ namespace cba
                 {
                     Cmd c = b.Cmds[numInstr];
                     var loc = new TraceLocation(numBlock, numInstr);
-                    if (trace.calleeCounterexamples.ContainsKey(loc))
+                    if (trace.CalleeCounterexamples.ContainsKey(loc))
                     {
                         ret +=
-                            RecBound(recFunc, trace.calleeCounterexamples[loc].counterexample,
+                            RecBound(recFunc, trace.CalleeCounterexamples[loc].Counterexample,
                             (c as CallCmd).Proc.Name);
                     }
                 }
@@ -244,34 +241,34 @@ namespace cba
         private static Program PrepareQuery(IEnumerable<Implementation> loopImpls, Program program)
         {
             // Sometimes loops have multiple backedges, hence multiple recursive calls: merge them
-            loopImpls.Iter(impl => mergeRecCalls(impl));
+            foreach (var impl in loopImpls) mergeRecCalls(impl);
 
             var dup = new FixedDuplicator(true);
             // Make copies of loopImpl procs
             var loopProcsCopy = new Dictionary<string, Procedure>();
-            loopImpls
-                .Iter(impl => loopProcsCopy.Add(impl.Name, dup.VisitProcedure(impl.Proc)));
+            foreach (var impl in loopImpls)
+                loopProcsCopy.Add(impl.Name, dup.VisitProcedure(impl.Proc));
 
-            loopProcsCopy.Values.Iter(proc => proc.Name += "_PassiveCopy");
+            foreach (var proc in loopProcsCopy.Values) proc.Name += "_PassiveCopy";
 
             // Make copies of the caller implementations
             var loopCallerImplCopy = new Dictionary<string, Implementation>();
             var loopCallerProcCopy = new Dictionary<string, Procedure>();
 
-            loopImpls
-                .Iter(impl => loopCallerImplCopy.Add(impl.Name, dup.VisitImplementation(loopCaller[impl.Name])));
+            foreach (var impl in loopImpls)
+                loopCallerImplCopy.Add(impl.Name, dup.VisitImplementation(loopCaller[impl.Name]));
 
-            loopImpls
-                .Iter(impl => loopCallerProcCopy.Add(impl.Name, dup.VisitProcedure(loopCaller[impl.Name].Proc)));
+            foreach (var impl in loopImpls)
+                loopCallerProcCopy.Add(impl.Name, dup.VisitProcedure(loopCaller[impl.Name].Proc));
 
-            loopCallerImplCopy
-                .Iter(kvp => kvp.Value.Name += "_EntryCopy_" + kvp.Key);
+            foreach (var kvp in loopCallerImplCopy)
+                kvp.Value.Name += "_EntryCopy_" + kvp.Key;
 
-            loopCallerProcCopy
-                .Iter(kvp => kvp.Value.Name += "_EntryCopy_" + kvp.Key);
+            foreach (var kvp in loopCallerProcCopy)
+                kvp.Value.Name += "_EntryCopy_" + kvp.Key;
 
-            loopCallerImplCopy
-                .Iter(kvp => kvp.Value.Proc = loopCallerProcCopy[kvp.Key]);
+            foreach (var kvp in loopCallerImplCopy)
+                kvp.Value.Proc = loopCallerProcCopy[kvp.Key];
 
             // Instrument callers
             foreach (var kvp in loopCallerImplCopy)
@@ -321,36 +318,33 @@ namespace cba
                 }
 
                 // assert av
-                impl.Blocks
-                    .Where(blk => blk.TransferCmd is ReturnCmd)
-                    .Iter(blk => blk.Cmds.Add(new AssertCmd(Token.NoToken, Expr.Ident(av))));
+                foreach (var blk in impl.Blocks.Where(blk => blk.TransferCmd is ReturnCmd))
+                    blk.Cmds.Add(new AssertCmd(Token.NoToken, Expr.Ident(av)));
             }
 
             // Prepare program
             var ret = new Program();
-            program.TopLevelDeclarations
-                .Where(decl => !(decl is Implementation))
-                .Iter(decl => ret.AddTopLevelDeclaration(decl));
+            foreach (var decl in program.TopLevelDeclarations.Where(decl => !(decl is Implementation)))
+                ret.AddTopLevelDeclaration(decl);
 
-            loopProcsCopy.Values
-                .Iter(decl => ret.AddTopLevelDeclaration(decl));
+            foreach (var decl in loopProcsCopy.Values)
+                ret.AddTopLevelDeclaration(decl);
 
-            loopCallerImplCopy.Values
-                .Iter(decl => ret.AddTopLevelDeclaration(decl));
+            foreach (var decl in loopCallerImplCopy.Values)
+                ret.AddTopLevelDeclaration(decl);
 
-            loopCallerProcCopy.Values
-                .Iter(decl => ret.AddTopLevelDeclaration(decl));
+            foreach (var decl in loopCallerProcCopy.Values)
+                ret.AddTopLevelDeclaration(decl);
 
-            loopImpls
-                .Iter(impl => ret.AddTopLevelDeclaration(impl));
+            foreach (var impl in loopImpls)
+                ret.AddTopLevelDeclaration(impl);
 
-            loopCallerImplCopy.Values
-                .Iter(impl => impl.AddAttribute("entrypoint"));
+            foreach (var impl in loopCallerImplCopy.Values)
+                impl.AddAttribute("entrypoint");
 
             // Store mapping: entrypoint -> loop
-            loopImpls
-                .Select(loop => Tuple.Create(loop, loopCallerImplCopy[loop.Name]))
-                .Iter(tup => tup.Item2.AddAttribute("LB_Mapping", tup.Item1.Name));
+            foreach (var tup in loopImpls.Select(loop => Tuple.Create(loop, loopCallerImplCopy[loop.Name])))
+                tup.Item2.AddAttribute("LB_Mapping", tup.Item1.Name);
 
             ret = BoogieUtil.ReResolveInMem(ret);
 
@@ -359,12 +353,11 @@ namespace cba
 
         private static void ComputeCallGraph(Program program)
         {
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl =>
-                {
-                    Succ.Add(impl.Name, new HashSet<Implementation>());
-                    Pred.Add(impl.Name, new HashSet<Implementation>());
-                });
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+            {
+                Succ.Add(impl.Name, new HashSet<Implementation>());
+                Pred.Add(impl.Name, new HashSet<Implementation>());
+            }
 
             var name2Impl = BoogieUtil.nameImplMapping(program);
             foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
@@ -433,35 +426,34 @@ namespace cba
 
             // grab the rec calls
             var recCalls = new Dictionary<string, CallCmd>();
-            rBlocks.Iter(blk => recCalls.Add(blk.Label, blk.Cmds.Last() as CallCmd));
+            foreach (var blk in rBlocks) recCalls.Add(blk.Label, blk.Cmds.Last() as CallCmd);
 
             // prune attributes
             var origAttr = new Dictionary<string, QKeyValue>();
-            recCalls.Iter(kvp => origAttr.Add(kvp.Key, kvp.Value.Attributes));
+            foreach (var kvp in recCalls) origAttr.Add(kvp.Key, kvp.Value.Attributes);
 
-            recCalls.Values
-                .Iter(cc => cc.Attributes = BoogieUtil.removeAttrs(new HashSet<string> { "si_unique_call", "si_old_unique_call" }, cc.Attributes));
+            foreach (var cc in recCalls.Values)
+                cc.Attributes = BoogieUtil.removeAttrs(new HashSet<string> { "si_unique_call", "si_old_unique_call" }, cc.Attributes);
 
             // check that all recursive calls have the same arguments
 
             // Check 1: ToString
             var callStr = new HashSet<string>();
-            recCalls.Values
-                .Iter(cc =>
-                {
-                    var str = new System.IO.StringWriter();
-                    var tt = new TokenTextWriter(str);
-                    cc.Emit(tt, 0);
-                    tt.Close();
-                    callStr.Add(str.ToString());
-                    str.Close();
-                });
+            foreach (var cc in recCalls.Values)
+            {
+                var str = new System.IO.StringWriter();
+                var tt = new TokenTextWriter(str, BoogieUtil.BoogieOptions);
+                cc.Emit(tt, 0);
+                tt.Close();
+                callStr.Add(str.ToString());
+                str.Close();
+            }
 
             if (callStr.Count != 1)
             {
                 // restore attributes
-                recCalls
-                    .Iter(kvp => kvp.Value.Attributes = origAttr[kvp.Key]);
+                foreach (var kvp in recCalls)
+                    kvp.Value.Attributes = origAttr[kvp.Key];
                 return null;
             }
 
@@ -473,8 +465,8 @@ namespace cba
                 .Any())
             {
                 // restore attributes
-                recCalls
-                    .Iter(kvp => kvp.Value.Attributes = origAttr[kvp.Key]);
+                foreach (var kvp in recCalls)
+                    kvp.Value.Attributes = origAttr[kvp.Key];
 
                 return null;
             }
@@ -482,14 +474,14 @@ namespace cba
             // Merge
             rc1.Attributes = origAttr[recCalls.Keys.First()];
             var nb = BoogieAstFactory.MkBlock(rc1);
-            rBlocks.Iter(blk => blk.Cmds.Remove(blk.Cmds.Last()));
-            rBlocks.Iter(blk =>
+            foreach (var blk in rBlocks) blk.Cmds.Remove(blk.Cmds.Last());
+            foreach (var blk in rBlocks)
             {
                 var gc = BoogieAstFactory.MkGotoCmd(nb.Label);
-                gc.labelTargets = new List<Block>();
-                gc.labelTargets.Add(nb);
+                gc.LabelTargets = new List<Block>();
+                gc.LabelTargets.Add(nb);
                 blk.TransferCmd = gc;
-            });
+            }
             impl.Blocks.Add(nb);
             return nb.Label;
         }
@@ -538,9 +530,9 @@ namespace cba
             // Type information is needed in some cases. For instance, the Command
             // Mem[x] := untracked-expr is converted to havoc temp; Mem[x] := temp. Here
             // we need the type of "untracked-expr" or of "Mem[x]"
-            if (p.Typecheck() != 0)
+            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
             {
-                p.Emit(new TokenTextWriter("error.bpl"));
+                p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
                 throw new InternalError("Type errors");
             }
             vslice.VisitProgram(p as Program);
@@ -665,7 +657,7 @@ namespace cba
         {
             foreach (var impl in p.TopLevelDeclarations.OfType<Implementation>())
             {
-                if (QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"))
+                if (QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null)
                     continue;
 
                 var proc = impl.Proc;
@@ -712,9 +704,9 @@ namespace cba
                 foreach (Declaration d in TopLevelDeclarations)
                 {
                     Implementation impl = d as Implementation;
-                    if (impl != null && !impl.SkipVerification)
+                    if (impl != null && !impl.IsSkipVerification(BoogieUtil.BoogieOptions))
                     {
-                        Inliner.ProcessImplementation(p as Program, impl);
+                        Inliner.ProcessImplementation(BoogieUtil.BoogieOptions, p as Program, impl);
                     }
                 }
                 foreach (Declaration d in TopLevelDeclarations)
@@ -846,9 +838,9 @@ namespace cba
                 return null;
 
             var gcmd = tcmd as GotoCmd;
-            if (gcmd.labelNames.Count != 1)
+            if (gcmd.LabelNames.Count != 1)
                 return null;
-            return gcmd.labelNames[0];
+            return gcmd.LabelNames[0];
         }
 
         private class WorkItemR
@@ -962,7 +954,7 @@ namespace cba
 
                     if (tc is GotoCmd)
                     {
-                        List<String> targets = (tc as GotoCmd).labelNames;
+                        List<String> targets = (tc as GotoCmd).LabelNames;
                         string target = matchInlinedLabelNames(targets, traceLabels[ecount]);
                         curr = new WorkItemR(curr.impl, target);
                         ret.addBlock(new ErrorTraceBlock(curr.label));
@@ -1255,7 +1247,7 @@ namespace cba
 
             reqCmds.AddRange(substOld.initLocVars);
 
-            substOld.varMap.Values.Iter(lv => newLocs.Add(lv));
+            foreach (var lv in substOld.varMap.Values) newLocs.Add(lv);
 
             impl.LocVars.AddRange(newLocs);
 

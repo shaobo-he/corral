@@ -147,7 +147,7 @@ namespace cba
                 rest[i] = this.VisitDeclaration(rest[i]);
 
             // Remove globals that are not tracked
-            node.TopLevelDeclarations = globals.Where(x => isTrackedVariable(x as GlobalVariable));
+            node.TopLevelDeclarations = globals.Where(x => isTrackedVariable(x as GlobalVariable)).Cast<Declaration>().ToList();
 
             node.AddTopLevelDeclarations(rest);
 
@@ -200,7 +200,7 @@ namespace cba
             // Check ensures annotations
             foreach (Ensures en in node.Ensures)
             {
-                if (QKeyValue.FindBoolAttribute(en.Attributes, "va_keep"))
+                if (QKeyValue.FindAttribute(en.Attributes, attr => attr.Key == "va_keep") != null)
                 {
                     abstracted_en.Add(en);
                     continue;
@@ -223,7 +223,7 @@ namespace cba
             // Check requires annotations
             foreach (Requires re in node.Requires)
             {
-                if (QKeyValue.FindBoolAttribute(re.Attributes, "va_keep"))
+                if (QKeyValue.FindAttribute(re.Attributes, attr => attr.Key == "va_keep") != null)
                 {
                     abstracted_req.Add(re);
                     continue;
@@ -423,7 +423,7 @@ namespace cba
                 }
                 else
                 {
-                    cmd.Emit(new TokenTextWriter(Console.Out), 0);
+                    cmd.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                     throw new InternalError("Unkown Cmd type encountered during variable slicing");
                 }
 
@@ -509,7 +509,7 @@ namespace cba
             if (varsToHavoc.Count != 0)
             {
                 var ieseq = new List<IdentifierExpr>();
-                varsToHavoc.Iter(v => ieseq.Add(Expr.Ident(v)));
+                foreach (var v in varsToHavoc) ieseq.Add(Expr.Ident(v));
                 newcmd.Add(new HavocCmd(Token.NoToken, ieseq));
             }
 
@@ -552,7 +552,7 @@ namespace cba
             }
             else
             {
-                lhs.Emit(new TokenTextWriter(Console.Out));
+                lhs.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions));
                 throw new InternalError("Unknown type of AssignLhs");
             }
 
@@ -645,7 +645,7 @@ namespace cba
             globalsRead = new HashSet<string>();
 
             // Typecheck -- needed for variable abstraction
-            if (node.Typecheck() != 0)
+            if (node.Typecheck(BoogieUtil.BoogieOptions) != 0)
             {
                 BoogieUtil.PrintProgram(node, "error.bpl");
                 throw new InternalError("Type errors");

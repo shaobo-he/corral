@@ -54,13 +54,13 @@ namespace ProgTransformation
         public static void ClearTokens(Program program)
         {
             FreeParserMemory();
-            program.TopLevelDeclarations
-                .OfType<Implementation>()
-                .Iter(impl => impl.StructuredStmts = new StmtList(new List<BigBlock>(), Token.NoToken));
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                impl.StructuredStmts = new StmtList(new List<BigBlock>(), Token.NoToken);
 
             var avisitor = new AbsyVisitor();
             avisitor.VisitProgram(program);
-            avisitor.m.Values.Iter(absy => absy.tok = Token.NoToken);
+            foreach (var absy in avisitor.m.Values)
+                absy.tok = Token.NoToken;
         }
 
     }
@@ -180,14 +180,14 @@ namespace ProgTransformation
                 count++;
 
                 StreamWriter writer = new StreamWriter(programStream as FileStream);
-                p.Emit(new TokenTextWriter(writer));
+                p.Emit(new TokenTextWriter(writer, BoogieUtil.BoogieOptions));
                 writer.Flush();
             }
             else if (useStrings)
             {
                 fileName = "";
                 var sw = new StringWriter();
-                p.Emit(new TokenTextWriter(sw));
+                p.Emit(new TokenTextWriter(sw, BoogieUtil.BoogieOptions));
                 sw.Flush();
                 programStream = sw.ToString();
             }
@@ -197,7 +197,7 @@ namespace ProgTransformation
                 programStream = new MemoryStream();
 
                 StreamWriter writer = new StreamWriter(programStream as MemoryStream);
-                p.Emit(new TokenTextWriter(writer));
+                p.Emit(new TokenTextWriter(writer, BoogieUtil.BoogieOptions));
                 writer.Flush();
             }
 
@@ -273,7 +273,7 @@ namespace ProgTransformation
                 }
             }
 
-            if (ret.Resolve() != 0)
+            if (ret.Resolve(BoogieUtil.BoogieOptions) != 0)
             {
                 writeToFile("error.bpl");
                 throw new InternalError("Illegal program given to PersistentProgram");
@@ -325,7 +325,7 @@ namespace ProgTransformation
             FixedDuplicator dup = new FixedDuplicator();
             Program ret = dup.VisitProgram(program);
 
-            if (ret.Resolve() != 0 || ret.Typecheck() != 0)
+            if (ret.Resolve(BoogieUtil.BoogieOptions) != 0 || ret.Typecheck(BoogieUtil.BoogieOptions) != 0)
             {
                 BoogieUtil.PrintProgram(ret, "error.bpl");
                 throw new InternalError("Illegal program given to PersistentProgram");

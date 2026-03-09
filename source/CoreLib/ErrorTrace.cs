@@ -241,7 +241,7 @@ namespace cba
         public List<string> getBlockLabels()
         {
             var ret = new List<string>();
-            Blocks.Iter(blk => ret.Add(blk.blockName));
+            foreach (var blk in Blocks) ret.Add(blk.blockName);
             return ret;
         }
 
@@ -255,7 +255,7 @@ namespace cba
         {
             if (blockMap != null) return;
             blockMap = new Dictionary<string, ErrorTraceBlock>();
-            Blocks.Iter(blk => blockMap.Add(blk.blockName, blk));
+            foreach (var blk in Blocks) blockMap.Add(blk.blockName, blk);
         }
 
         // Return the set of procedures that the trace passes through
@@ -497,7 +497,7 @@ namespace cba
 
             // Sort values
             var vlist = new List<int>();
-            vals.Iter(v => vlist.Add(v));
+            foreach (var v in vals) vlist.Add(v);
             vlist.Sort();
 
             // Build map to new values
@@ -1293,7 +1293,7 @@ namespace cba
         private static void setupPrint(PersistentProgram program, ErrorTrace trace, string file)
         {
             // Set output files
-            pathFile = new TokenTextWriter(file + "_trace.txt");
+            pathFile = new TokenTextWriter(file + "_trace.txt", BoogieUtil.BoogieOptions);
             program.writeToFile(file + ".bpl");
             Program prog = program.getProgram();
 
@@ -1418,7 +1418,7 @@ namespace cba
         private static Stack<Dictionary<int, ErrorTrace>> traceStack = new Stack<Dictionary<int, ErrorTrace>>();
 
         public InlineToTrace(Program program, InlineCallback cb)
-            :base(program, cb, -1)
+            :base(program, cb, -1, BoogieUtil.BoogieOptions)
         { }
 
         // Return callCmd -> callee trace
@@ -1448,11 +1448,10 @@ namespace cba
 
         static void AnnotateUniqueId(Implementation impl)
         {
-            impl.Blocks
-                .Iter(blk => blk.Cmds.OfType<CallCmd>()
-                    .Iter(c => 
-                        c.Attributes = new QKeyValue(Token.NoToken, "InlineToTraceUniqueId", 
-                            new object[] { Expr.Literal(uniqueId++) }.ToList(), c.Attributes)));
+            foreach (var blk in impl.Blocks)
+                foreach (var c in blk.Cmds.OfType<CallCmd>())
+                    c.Attributes = new QKeyValue(Token.NoToken, "InlineToTraceUniqueId",
+                        new object[] { Expr.Literal(uniqueId++) }.ToList(), c.Attributes);
         }
 
         public static void Inline(Program program, ErrorTrace trace)
@@ -1471,7 +1470,7 @@ namespace cba
             }
             var entry = 
             TopLevelDeclarations.OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"));
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null);
             if (entry.Count() != 1)
                 throw new InternalError("InlineToTrace requires a unique entry poiny");
             var entryPoint = entry.First();
@@ -1481,7 +1480,7 @@ namespace cba
             var inliner = new InlineToTrace(program, null);
 
             traceStack.Push(FindCallsOnTrace(entryPoint, trace));
-            Inliner.ProcessImplementation(program, entryPoint, inliner);
+            inliner.ProcessImplementation(program, entryPoint);
 
             foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
             {
@@ -1490,12 +1489,12 @@ namespace cba
 
                 // rename blocks and variables to avoid future naming conflicts with inlining
                 var rename = new RenameLabelsAndVariables();
-                impl.LocVars.Iter(v => rename.VisitVariable(v));
+                foreach (var v in impl.LocVars) rename.VisitVariable(v);
                 rename.VisitBlockList(impl.Blocks);
             }
         }
         
-        public override List<Block> DoInlineBlocks(List<Block> blocks, ref bool inlinedSomething)
+        public override List<Block> DoInlineBlocks(IList<Block> blocks, ref bool inlinedSomething)
         {
             var ret = base.DoInlineBlocks(blocks, ref inlinedSomething);
             traceStack.Pop();
@@ -1509,7 +1508,7 @@ namespace cba
             var loc = traceStack.Peek();
             if (!loc.ContainsKey(id)) return -1;
             traceStack.Push(FindCallsOnTrace(impl, loc[id]));
-            recursiveProcUnrollMap[impl.Name] = 1;
+            // RecursiveProcUnrollMap removed in Boogie 3.x; inline count controlled by GetInlineCount return value
             return 1;
 
         }
@@ -1552,15 +1551,15 @@ namespace cba
 
             public override GotoCmd VisitGotoCmd(GotoCmd node)
             {
-                var ss = node.labelNames;
-                node.labelNames = new List<String>();
-                ss.OfType<string>().Iter(s =>
-                    {
-                        if (s.StartsWith("inline$"))
-                            node.labelNames.Add("itt$" + s);
-                        else
-                            node.labelNames.Add(s);
-                    });
+                var ss = node.LabelNames;
+                node.LabelNames = new List<String>();
+                foreach (var s in ss.OfType<string>())
+                {
+                    if (s.StartsWith("inline$"))
+                        node.LabelNames.Add("itt$" + s);
+                    else
+                        node.LabelNames.Add(s);
+                }
                 return base.VisitGotoCmd(node);
             }
         }

@@ -17,7 +17,7 @@ public class CbaLiveVariableAnalysis
         foreach (Block/*!*/ block in impl.Blocks)
         {
             Contract.Assert(block != null);
-            block.liveVarsBefore = null;
+            block.LiveVarsBefore = null;
         }
     }
 
@@ -42,14 +42,14 @@ public class CbaLiveVariableAnalysis
         Contract.Requires(impl != null);
         //Microsoft.Boogie.Helpers.ExtraTraceInformation("Starting live variable analysis");
         Graph<Block> dag = new Graph<Block>();
-        dag.AddSource(cce.NonNull(impl.Blocks[0])); // there is always at least one node in the graph
+        dag.AddSource(impl.Blocks[0]); // there is always at least one node in the graph
         foreach (Block b in impl.Blocks)
         {
             GotoCmd gtc = b.TransferCmd as GotoCmd;
             if (gtc != null)
             {
-                Contract.Assume(gtc.labelTargets != null);
-                foreach (Block/*!*/ dest in gtc.labelTargets)
+                Contract.Assume(gtc.LabelTargets != null);
+                foreach (Block/*!*/ dest in gtc.LabelTargets)
                 {
                     Contract.Assert(dest != null);
                     dag.AddEdge(dest, b);
@@ -76,7 +76,7 @@ public class CbaLiveVariableAnalysis
                 Propagate(cmds[i], liveVarsAfter, program == null);
             }
 
-            block.liveVarsBefore = liveVarsAfter;
+            block.LiveVarsBefore = liveVarsAfter;
 
         }
     }
@@ -84,16 +84,15 @@ public class CbaLiveVariableAnalysis
     private static void PropagateCall(CallCmd cc, HashSet<Variable> liveVarsAfter, Program program)
     {
         // globals U in-params U (after - out-params)
-        cc.Outs.Where(ie => ie != null).Iter(ie => liveVarsAfter.Remove(ie.Decl));
+        foreach (var ie in cc.Outs.Where(ie => ie != null)) liveVarsAfter.Remove(ie.Decl);
         if (program != null)
         {
-            program.TopLevelDeclarations
-                .OfType<GlobalVariable>()
-                .Iter(v => liveVarsAfter.Add(v));
+            foreach (var v in program.TopLevelDeclarations.OfType<GlobalVariable>())
+                liveVarsAfter.Add(v);
         }
 
         VariableCollector/*!*/ collector = new VariableCollector();
-        cc.Ins.Where(e => e != null).Iter(e => collector.Visit(e));
+        foreach (var e in cc.Ins.Where(e => e != null)) collector.Visit(e);
         if (program == null)
         {
             liveVarsAfter.UnionWith(collector.usedVars.Where(v => v is LocalVariable || v is Formal));
@@ -110,13 +109,13 @@ public class CbaLiveVariableAnalysis
         if (block.TransferCmd is GotoCmd)
         {
             GotoCmd gotoCmd = (GotoCmd)block.TransferCmd;
-            if (gotoCmd.labelTargets != null)
+            if (gotoCmd.LabelTargets != null)
             {
-                foreach (Block/*!*/ succ in gotoCmd.labelTargets)
+                foreach (Block/*!*/ succ in gotoCmd.LabelTargets)
                 {
                     Contract.Assert(succ != null);
-                    Contract.Assert(succ.liveVarsBefore != null);
-                    liveVarsAfter.UnionWith(succ.liveVarsBefore);
+                    Contract.Assert(succ.LiveVarsBefore != null);
+                    liveVarsAfter.UnionWith(succ.LiveVarsBefore);
                 }
             }
         }
@@ -125,14 +124,12 @@ public class CbaLiveVariableAnalysis
             // Globals and out-formals are live
             if (program != null)
             {
-                program.TopLevelDeclarations
-                    .OfType<GlobalVariable>()
-                    .Iter(v => liveVarsAfter.Add(v));
+                foreach (var v in program.TopLevelDeclarations.OfType<GlobalVariable>())
+                    liveVarsAfter.Add(v);
             }
 
-            impl.OutParams
-                .OfType<Formal>()
-                .Iter(v => liveVarsAfter.Add(v));
+            foreach (var v in impl.OutParams.OfType<Formal>())
+                liveVarsAfter.Add(v);
         }
         return liveVarsAfter;
     }
@@ -141,10 +138,10 @@ public class CbaLiveVariableAnalysis
     public static void Propagate(Cmd cmd, HashSet<Variable/*!*/>/*!*/ liveSet, bool allGlobalsAreLive)
     {
         Contract.Requires(cmd != null);
-        Contract.Requires(cce.NonNullElements(liveSet));
+        Contract.Requires(liveSet != null);
         if (cmd is AssignCmd)
         {
-            AssignCmd/*!*/ assignCmd = (AssignCmd)cce.NonNull(cmd);
+            AssignCmd/*!*/ assignCmd = (AssignCmd)cmd;
             // I must first iterate over all the targets and remove the live ones.
             // After the removals are done, I must add the variables referred on 
             // the right side of the removed targets
@@ -200,7 +197,7 @@ public class CbaLiveVariableAnalysis
         else if (cmd is PredicateCmd)
         {
             Contract.Assert((cmd is AssertCmd || cmd is AssumeCmd));
-            PredicateCmd/*!*/ predicateCmd = (PredicateCmd)cce.NonNull(cmd);
+            PredicateCmd/*!*/ predicateCmd = (PredicateCmd)cmd;
             if (predicateCmd.Expr is LiteralExpr)
             {
                 LiteralExpr le = (LiteralExpr)predicateCmd.Expr;
@@ -229,13 +226,13 @@ public class CbaLiveVariableAnalysis
         }
         else if (cmd is SugaredCmd)
         {
-            SugaredCmd/*!*/ sugCmd = (SugaredCmd)cce.NonNull(cmd);
-            Propagate(sugCmd.Desugaring, liveSet, allGlobalsAreLive);
+            SugaredCmd/*!*/ sugCmd = (SugaredCmd)cmd;
+            Propagate(sugCmd.GetDesugaring(BoogieUtil.BoogieOptions), liveSet, allGlobalsAreLive);
         }
         else if (cmd is StateCmd)
         {
-            StateCmd/*!*/ stCmd = (StateCmd)cce.NonNull(cmd);
-            List<Cmd>/*!*/ cmds = cce.NonNull(stCmd.Cmds);
+            StateCmd/*!*/ stCmd = (StateCmd)cmd;
+            List<Cmd>/*!*/ cmds = stCmd.Cmds;
             int len = cmds.Count;
             for (int i = len - 1; i >= 0; i--)
             {
@@ -251,7 +248,7 @@ public class CbaLiveVariableAnalysis
         {
             {
                 Contract.Assert(false);
-                throw new cce.UnreachableException();
+                throw new Exception("Unreachable");
             }
         }
     }

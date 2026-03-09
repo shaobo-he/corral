@@ -1,13 +1,16 @@
 ﻿﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Boogie;
 using Microsoft.Boogie.VCExprAST;
 using VC;
-using Outcome = VC.VCGen.Outcome;
+using Outcome = VC.VcOutcome;
 using cba.Util;
 using Microsoft.Boogie.GraphUtil;
 
@@ -51,20 +54,18 @@ namespace CoreLib
             var assertLocations = new List<Procedure>();
             foreach (var impl in node.TopLevelDeclarations.OfType<Implementation>())
             {
-                if (QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"))
+                if (QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null)
                     continue;
                 if (cba.Util.BoogieVerify.ignoreAssertMethods.Contains(impl.Name))
                     continue;
 
-                impl.Blocks.Iter(block =>
-                    block.Cmds.OfType<AssignCmd>()
-                    .Iter(cmd =>
+                foreach (var block in impl.Blocks)
+                    foreach (var cmd in block.Cmds.OfType<AssignCmd>())
                     {
                         foreach (var lhs in cmd.Lhss)
                             if (lhs.DeepAssignedVariable.Name == cba.Util.BoogieVerify.assertsPassed)
                                 assertLocations.Add(impl.Proc);
-
-                    }));
+                    }
             }
             return assertLocations;
         }
@@ -163,7 +164,7 @@ namespace CoreLib
     ****************************************/
 
     /* stratified inlining technique */
-    public class StratifiedInlining : StratifiedVCGenBase
+    public class StratifiedInlining : StratifiedVerificationConditionGeneratorBase
     {
         public static readonly string ForceInlineAttr = "ForceInline";
         public static int StratifiedInliningVerbose = 0;
@@ -226,7 +227,7 @@ namespace CoreLib
             LocateAsserts locate = new LocateAsserts();
             assertMethods = locate.VisitIt(prog);
             mainProc = prog.TopLevelDeclarations.OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"))
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null)
                 .Select(impl => impl.Proc)
                 .FirstOrDefault();
 
@@ -255,17 +256,16 @@ namespace CoreLib
         }
 
         public StratifiedInlining(Program program, string logFilePath, bool appendLogFile, Action<Implementation> PassiveImplInstrumentation) :
-            base(program, logFilePath, appendLogFile, new List<Checker>(), PassiveImplInstrumentation)
+            base(TextWriter.Null, BoogieUtil.BoogieOptions, program, logFilePath, appendLogFile, new CheckerPool(BoogieUtil.BoogieOptions), PassiveImplInstrumentation)
         {
             stats = new Stats();
 
             this.extraRecBound = new Dictionary<string, int>();
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl =>
-                {
-                    var b = QKeyValue.FindIntAttribute(impl.Attributes, BoogieVerify.ExtraRecBoundAttr, -1);
-                    if (b != -1) extraRecBound.Add(impl.Name, b);
-                });
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+            {
+                var b = QKeyValue.FindIntAttribute(impl.Attributes, BoogieVerify.ExtraRecBoundAttr, -1);
+                if (b != -1) extraRecBound.Add(impl.Name, b);
+            }
 
             if (cba.Util.BoogieVerify.options.useFwdBck)
             {
@@ -517,7 +517,7 @@ namespace CoreLib
                     foreach (var e in tup.Value)
                         nodeToTime.Add(e.Item1, e.Item3);
 
-                nodeToTime.Keys.Iter(n => nodeToChildren.Add(n, new HashSet<int>()));
+                foreach (var n in nodeToTime.Keys) nodeToChildren.Add(n, new HashSet<int>());
 
                 // Edges
                 foreach (var tup in Edges)
@@ -566,7 +566,7 @@ namespace CoreLib
                         var tleft = threads[i].Item2 - min;
                         if (isZero(tleft))
                         {
-                            nodeToChildren[threads[i].Item1].Iter(n => available.Add(n));
+                            foreach (var n in nodeToChildren[threads[i].Item1]) available.Add(n);
                             threads[i] = Tuple.Create(-1, 0.0);
                         }
                         else
@@ -601,8 +601,8 @@ namespace CoreLib
             var PrevAsserted = new Func<HashSet<Tuple<StratifiedVC, Block>>>(() =>
             {
                 var ret = new HashSet<Tuple<StratifiedVC, Block>>();
-                prevMustAsserted.ToList().Iter(ls =>
-                    ls.Iter(tup => ret.Add(tup)));
+                foreach (var ls in prevMustAsserted.ToList())
+                    foreach (var tup in ls) ret.Add(tup);
                 return ret;
             });
 
@@ -616,7 +616,7 @@ namespace CoreLib
                     {
                         var disj = di.DisjointNodes(n);
 
-                        disj.Iter(m => di.DeleteNode(m));
+                        foreach (var m in disj) di.DeleteNode(m);
                     }
                 });
 
@@ -659,14 +659,14 @@ namespace CoreLib
                             maxVcScore = score;
                         }
                     }
-                    toRemove.Iter(vc => attachedVCInv.Remove(vc));
+                    foreach (var vc in toRemove) attachedVCInv.Remove(vc);
 
                     var scs = attachedVCInv[maxVc];
                     Debug.Assert(!openCallSites.Contains(scs));
 
                     var desc = sizes[maxVc];
                     var cnt = 0;
-                    openCallSites.Iter(cs => cnt += desc.Contains(containingVC(cs)) ? 1 : 0);
+                    foreach (var cs in openCallSites) cnt += desc.Contains(containingVC(cs)) ? 1 : 0;
                     
                     // Push & Block
                     MacroSI.PRINT("{0}>>> Pushing Block({1}, {2}, {3}, {4}, {5})", indent(decisions.Count), scs.callSite.calleeName, sizes[maxVc].Count, disj[maxVc], size, stats.numInlined);
@@ -694,7 +694,7 @@ namespace CoreLib
                 {
                     // Stop if we've reached the recursion bound or
                     // the stack-depth bound (if there is one)
-                    if (HasExceededRecursionDepth(cs, CommandLineOptions.Clo.RecursionBound) ||
+                    if (HasExceededRecursionDepth(cs, BoogieUtil.RecursionBound) ||
                         (StackDepthBound > 0 &&
                         StackDepth(cs) > StackDepthBound))
                     {
@@ -810,7 +810,7 @@ namespace CoreLib
             }
             Console.WriteLine();
 
-            if (outcome == Outcome.Correct && reachedBound) return Outcome.ReachedBound;
+            if (outcome == Outcome.Correct && reachedBound) return VcOutcome.Inconclusive;
             return outcome;
         }
 
@@ -834,8 +834,8 @@ namespace CoreLib
             var PrevAsserted = new Func<HashSet<Tuple<StratifiedVC, Block>>>(() =>
                 {
                     var ret = new HashSet<Tuple<StratifiedVC, Block>>();
-                    prevMustAsserted.ToList().Iter(ls =>
-                        ls.Iter(tup => ret.Add(tup)));
+                    foreach (var ls in prevMustAsserted.ToList())
+                        foreach (var tup in ls) ret.Add(tup);
                     return ret;
                 });
             
@@ -856,7 +856,7 @@ namespace CoreLib
                 {                    
                     // Stop if we've reached the recursion bound or
                     // the stack-depth bound (if there is one)
-                    if (HasExceededRecursionDepth(cs, CommandLineOptions.Clo.RecursionBound) ||
+                    if (HasExceededRecursionDepth(cs, BoogieUtil.RecursionBound) ||
                         (StackDepthBound > 0 &&
                         StackDepth(cs) > StackDepthBound))
                     {
@@ -973,7 +973,7 @@ namespace CoreLib
             }
             reporter.reportTraceIfNothingToExpand = false;
 
-            if (outcome == Outcome.Correct && reachedBound) return Outcome.ReachedBound;
+            if (outcome == Outcome.Correct && reachedBound) return VcOutcome.Inconclusive;
             return outcome;
         }
 
@@ -995,7 +995,7 @@ namespace CoreLib
                 {
                     // Stop if we've reached the recursion bound or
                     // the stack-depth bound (if there is one)
-                    if (HasExceededRecursionDepth(cs, CommandLineOptions.Clo.RecursionBound) ||
+                    if (HasExceededRecursionDepth(cs, BoogieUtil.RecursionBound) ||
                         (StackDepthBound > 0 &&
                         StackDepth(cs) > StackDepthBound))
                     {
@@ -1014,7 +1014,7 @@ namespace CoreLib
                 if (outcome != Outcome.Errors)
                 {
                     if (boundAsserted.Count > 0 && outcome == Outcome.Correct)
-                        outcome = Outcome.ReachedBound;
+                        outcome = VcOutcome.Inconclusive;
 
                     break; // done
                 }
@@ -1068,7 +1068,7 @@ namespace CoreLib
                 {
                     // Stop if we've reached the recursion bound or
                     // the stack-depth bound (if there is one)
-                    if (RecursionDepth(cs) > CommandLineOptions.Clo.RecursionBound ||
+                    if (RecursionDepth(cs) > BoogieUtil.RecursionBound ||
                         (StackDepthBound > 0 &&
                         StackDepth(cs) > StackDepthBound))
                     {
@@ -1123,7 +1123,7 @@ namespace CoreLib
                 {
                     if (decisions.Count == 0)
                     {
-                        if (boundHit) outcome = Outcome.ReachedBound;
+                        if (boundHit) outcome = VcOutcome.Inconclusive;
                         Pop();
                         break;
                     }
@@ -1178,9 +1178,9 @@ namespace CoreLib
             while (true)
             {
                 // Check timeout
-                if (CommandLineOptions.Clo.TimeLimit != 0)
+                if (BoogieUtil.BoogieOptions.TimeLimit != 0)
                 {
-                    if ((DateTime.UtcNow - startTime).TotalSeconds > CommandLineOptions.Clo.TimeLimit)
+                    if ((DateTime.UtcNow - startTime).TotalSeconds > BoogieUtil.BoogieOptions.TimeLimit)
                     {
                         return Outcome.TimedOut;
                     }
@@ -1190,7 +1190,7 @@ namespace CoreLib
                 if (BoogieVerify.options.maxInlinedBound != 0 &&
                     stats.numInlined > BoogieVerify.options.maxInlinedBound)
                 {
-                    return Outcome.ReachedBound;
+                    return VcOutcome.Inconclusive;
                 }
 
                 MacroSI.PRINT_DEBUG("  - underapprox");
@@ -1243,7 +1243,7 @@ namespace CoreLib
                 if (outcome != Outcome.Errors)
                 {
                     if (boundHit && outcome == Outcome.Correct)
-                        outcome = Outcome.ReachedBound;
+                        outcome = VcOutcome.Inconclusive;
 
                     break; // done
                 }
@@ -1304,44 +1304,46 @@ namespace CoreLib
             var ret = new List<Tuple<StratifiedVC, Block>>();
 
             // This is most likely redundant
-            prover.Assert(svc.MustReach(svc.info.impl.Blocks[0]), true);
+            // Note: MustReach in Boogie 3.5.6 requires a ControlFlowIdMap<Absy> as second arg
+            // Passing null as the map is a placeholder; MustReach path may not be used in practice
+            prover.Assert(svc.MustReach(svc.info.Implementation.Blocks[0], (ControlFlowIdMap<Absy>)null), true);
 
             if (!attachedVCInv.ContainsKey(svc))
                 return ret;
 
-            var iter = attachedVCInv[svc]; 
+            var iter = attachedVCInv[svc];
             while (parent.ContainsKey(iter))
             {
                 var vc = attachedVC[parent[iter]];
                 var callblock = vc.callSites.First(tup => tup.Value.Contains(iter)).Key;
-                
+
                 var key = Tuple.Create(vc, callblock);
                 if (prevAsserted != null && !prevAsserted.Contains(key))
                 {
-                    prover.Assert(vc.MustReach(callblock), true);
+                    prover.Assert(vc.MustReach(callblock, (ControlFlowIdMap<Absy>)null), true);
                     ret.Add(key);
                 }
                 iter = parent[iter];
             }
-            prover.Assert(mainVC.MustReach(mainVC.callSites.First(tup => tup.Value.Contains(iter)).Key), true);
+            prover.Assert(mainVC.MustReach(mainVC.callSites.First(tup => tup.Value.Contains(iter)).Key, (ControlFlowIdMap<Absy>)null), true);
             return ret;
         }
 
         public Outcome Bck(StratifiedVC svc, HashSet<StratifiedCallSite> openCallSites,
             StratifiedInliningErrorReporter reporter, Dictionary<string, int> backboneRecDepth)
         {
-            var outcome = Fwd(openCallSites, reporter, svc.info.impl.Name == mainProc.Name, CommandLineOptions.Clo.RecursionBound);
+            var outcome = Fwd(openCallSites, reporter, svc.info.Implementation.Name == mainProc.Name, BoogieUtil.RecursionBound);
             if (outcome != Outcome.Errors)
                 return outcome;
-            if (svc.info.impl.Name == mainProc.Name)
+            if (svc.info.Implementation.Name == mainProc.Name)
                 return outcome;
 
             outcome = Outcome.Correct;
             var boundHit = false;
 
-            foreach (var caller in callGraph.callers[svc.info.impl.Proc])
+            foreach (var caller in callGraph.callers[svc.info.Implementation.Proc])
             {
-                if (backboneRecDepth[caller.Name] == CommandLineOptions.Clo.RecursionBound)
+                if (backboneRecDepth[caller.Name] == BoogieUtil.RecursionBound)
                 {
                     boundHit = true;
                     continue;
@@ -1358,7 +1360,7 @@ namespace CoreLib
                 callerOpenCallSites.UnionWith(callerVC.CallSites);
                 //Console.WriteLine("Adding call-sites: {0}", callerVC.CallSites.Select(s => s.callSiteExpr.ToString()).Concat(" "));
 
-                foreach (var cs in callerVC.CallSites.Where(s => s.callSite.calleeName == svc.info.impl.Name))
+                foreach (var cs in callerVC.CallSites.Where(s => s.callSite.calleeName == svc.info.Implementation.Name))
                 {
                     Push();
 
@@ -1383,15 +1385,15 @@ namespace CoreLib
                     foreach (var s in svc.CallSites)
                         parent.Remove(s);
 
-                    callerOpenCallSites.Iter(ocs => attachedVC.Remove(ocs));
+                    foreach (var ocs in callerOpenCallSites) attachedVC.Remove(ocs);
 
                     Pop();
 
                     if (outcome == Outcome.Errors)
                         break;
-                    if (outcome != Outcome.ReachedBound && outcome != Outcome.Correct)
+                    if (outcome != VcOutcome.Inconclusive && outcome != Outcome.Correct)
                         break;
-                    if (outcome == Outcome.ReachedBound)
+                    if (outcome == VcOutcome.Inconclusive)
                         boundHit = true;
                 }
 
@@ -1399,12 +1401,12 @@ namespace CoreLib
 
                 if (outcome == Outcome.Errors)
                     break;
-                if (outcome != Outcome.ReachedBound && outcome != Outcome.Correct)
+                if (outcome != VcOutcome.Inconclusive && outcome != Outcome.Correct)
                     break;
             }
 
             if (boundHit && outcome == Outcome.Correct)
-                return Outcome.ReachedBound;
+                return VcOutcome.Inconclusive;
 
             return outcome;
         }
@@ -1414,8 +1416,8 @@ namespace CoreLib
             MacroSI.PRINT_DETAIL("Starting forward/backward approach...");
             Outcome outcome = Outcome.Correct;
             var backbonedepth = new Dictionary<string, int>();
-            program.TopLevelDeclarations.OfType<Procedure>()
-                .Iter(proc => backbonedepth.Add(proc.Name, 0));
+            foreach (var proc in program.TopLevelDeclarations.OfType<Procedure>())
+                backbonedepth.Add(proc.Name, 0);
             mainProc = impl.Proc;
 
             var boundHit = false;
@@ -1447,17 +1449,17 @@ namespace CoreLib
                     return outcome;
 
                 /* something went wrong */
-                if (outcome != Outcome.ReachedBound && outcome != Outcome.Correct)
+                if (outcome != VcOutcome.Inconclusive && outcome != Outcome.Correct)
                     return outcome;
 
-                if (outcome == Outcome.ReachedBound)
+                if (outcome == VcOutcome.Inconclusive)
                     boundHit = true;
 
                 MacroSI.PRINT_DETAIL("No bug starting from " + assertMethod.Name + ". Selecting next method (if existing)...");
             }
 
             /* none of the methods containing an assert reaches successfully the main -- the program is safe */
-            return boundHit ? Outcome.ReachedBound : Outcome.Correct;
+            return boundHit ? VcOutcome.Inconclusive : Outcome.Correct;
         }
 
         void MustFail(StratifiedVC svc)
@@ -1509,9 +1511,11 @@ namespace CoreLib
 
 
         /* verification */
-        public override Outcome VerifyImplementation(Implementation impl, VerifierCallback callback)
+        public override async Task<VcOutcome> VerifyImplementation(ImplementationRun run, VerifierCallback callback, CancellationToken cancellationToken)
         {
+            var impl = run.Implementation;
             startTime = DateTime.UtcNow;
+            await Task.CompletedTask; // required to make method async
 
             procsHitRecBound = new HashSet<string>();
 
@@ -1558,7 +1562,7 @@ namespace CoreLib
                 var nextOpenCallSites = new HashSet<StratifiedCallSite>();
                 foreach (StratifiedCallSite scs in openCallSites)
                 {
-                    if (HasExceededRecursionDepth(scs, CommandLineOptions.Clo.RecursionBound)) continue;
+                    if (HasExceededRecursionDepth(scs, BoogieUtil.RecursionBound)) continue;
 
                     var ss = Expand(scs);
                     if(ss != null) nextOpenCallSites.UnionWith(ss.CallSites);
@@ -1655,7 +1659,7 @@ namespace CoreLib
             }
             else
             {
-                int currRecursionBound = (BoogieVerify.options.extraFlags.Contains("MaxRec") || BoogieVerify.options.NonUniformUnfolding) ? CommandLineOptions.Clo.RecursionBound :
+                int currRecursionBound = (BoogieVerify.options.extraFlags.Contains("MaxRec") || BoogieVerify.options.NonUniformUnfolding) ? BoogieUtil.RecursionBound :
                     1;
                 while (true)
                 {
@@ -1668,7 +1672,7 @@ namespace CoreLib
                         break;
 
                     // reached bound?
-                    if (outcome == Outcome.ReachedBound && currRecursionBound < CommandLineOptions.Clo.RecursionBound)
+                    if (outcome == VcOutcome.Inconclusive && currRecursionBound < BoogieUtil.RecursionBound)
                     {
                         if(StratifiedInliningVerbose > 0)
                             Console.WriteLine("SI: Exhausted recursion bound of {0}", currRecursionBound);
@@ -1707,7 +1711,7 @@ namespace CoreLib
                 callsites.UnionWith(parent.Keys);
                 callsites.UnionWith(parent.Values);
                 callsites.ExceptWith(openCallSites);
-                callsites.Iter(scs => CallTree.Add(GetPersistentID(scs)));
+                foreach (var scs in callsites) CallTree.Add(GetPersistentID(scs));
 
                 prevMain = impl.Name;
                 prevDag = di.GetDag();
@@ -1759,7 +1763,7 @@ namespace CoreLib
                     toassert = prover.VCExprGen.And(prover.VCExprGen.Implies(cb, svc.vcexpr), toassert);
                 }
 
-                prover.LogComment("Inlining " + scs.callSite.calleeName + " from " + (parent.ContainsKey(scs) ? attachedVC[parent[scs]].info.impl.Name : "main"));
+                prover.LogComment("Inlining " + scs.callSite.calleeName + " from " + (parent.ContainsKey(scs) ? attachedVC[parent[scs]].info.Implementation.Name : "main"));
 
                 di.Expanded(scs, svc);
                 stats.vcSize += SizeComputingVisitor.ComputeSize(toassert);
@@ -1834,7 +1838,7 @@ namespace CoreLib
                 var scs = attachedVCInv[vc];
                 ret = GetPersistentID(scs);
             }
-            return string.Format("{0}_262_{1}", ret, vc.info.impl.Name);
+            return string.Format("{0}_262_{1}", ret, vc.info.Implementation.Name);
         }
 
         // 'Attach' inlined from Boogie/StratifiedVC.cs (and made static)
@@ -1866,24 +1870,21 @@ namespace CoreLib
             stats.calls++;
             var stopwatch = Stopwatch.StartNew();
             prover.Check();
+            var (solverOutcome, _) = prover.CheckAssumptions(new List<VCExpr>(), reporter, CancellationToken.None).GetAwaiter().GetResult();
             stats.time += stopwatch.ElapsedTicks;
-            ProverInterface.Outcome outcome = prover.CheckOutcomeCore(reporter);
-            return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(outcome);
+            return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
         }
 
         private Outcome CheckVC(List<VCExpr> softAssumptions, ProverInterface.ErrorHandler reporter)
         {
-            List<int> unsatCore;
-
             stats.calls++;
             var stopwatch = Stopwatch.StartNew();
-            ProverInterface.Outcome outcome = 
-                prover.CheckAssumptions(new List<VCExpr>(), softAssumptions, out unsatCore, reporter);
+            var (solverOutcome, _) = prover.CheckAssumptions(new List<VCExpr>(), softAssumptions, reporter, CancellationToken.None).GetAwaiter().GetResult();
             stats.time += stopwatch.ElapsedTicks;
-            return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(outcome);
+            return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
         }
 
-        public override Outcome FindLeastToVerify(Implementation impl, ref HashSet<string> allBoolVars)
+        public override VcOutcome FindLeastToVerify(Implementation impl, ref HashSet<string> allBoolVars)
         {
             var name2VC = new Dictionary<string, StratifiedVC>();
             var getSVC = new Func<string, StratifiedVC>(name =>
@@ -1988,7 +1989,7 @@ namespace CoreLib
         {
             var assumptions = new List<VCExpr>();
             var query = new HashSet<string>();
-            varsToSet.Iter(v => query.Add(v.Name));
+            foreach (var v in varsToSet) query.Add(v.Name);
 
             prover.LogComment("FindLeast: Query Begin");
 
@@ -2170,7 +2171,7 @@ namespace CoreLib
             {
                 IndexC = new IndexComputer(SI.program);
                 var impls = new Dictionary<string, Implementation>();
-                SI.implName2StratifiedInliningInfo.Iter(tup => impls.Add(tup.Key, tup.Value.impl));
+                foreach (var tup in SI.implName2StratifiedInliningInfo) impls.Add(tup.Key, tup.Value.Implementation);
                 Disj = new ProgramDisjointness(impls);
 
                 currentDag = new DagOracle(SI.program, Disj, SI.extraRecBound);
@@ -2258,7 +2259,7 @@ namespace CoreLib
         {
             var ret = new HashSet<StratifiedVC>();
             var disj = currentDag.AllDisjointNodes();
-            disj[vcNodeMap[vc]].Iter(n => ret.Add(vcNodeMap[n]));
+            foreach (var n in disj[vcNodeMap[vc]]) ret.Add(vcNodeMap[n]);
             return ret;
         }
 
@@ -2280,8 +2281,8 @@ namespace CoreLib
             Dictionary<DagOracle.DagNode, HashSet<DagOracle.DagNode>> nodeToChildren;
             currentDag.ComputeDagSizes(out nodeToTreeSize, out nodeToChildren);
 
-            nodeToChildren.Iter(tup => ret.Add(vcNodeMap[tup.Key],
-                new HashSet<StratifiedVC>(tup.Value.Select(n => vcNodeMap[n]))));
+            foreach (var tup in nodeToChildren) ret.Add(vcNodeMap[tup.Key],
+                new HashSet<StratifiedVC>(tup.Value.Select(n => vcNodeMap[n])));
 
             return ret;
         }
@@ -2320,11 +2321,11 @@ namespace CoreLib
             Debug.Assert(currentDag.Nodes.Count == 0);
 
             var rv = IndexC.GetMainRv();
-            var index = IndexC.GetIndex(vc.info.impl.Name, rv);
+            var index = IndexC.GetIndex(vc.info.Implementation.Name, rv);
             vcToRecVector.Add(vc, rv);
 
             // Add to dag
-            var node = new DagOracle.DagNode(index, vc.info.impl.Name, 1);
+            var node = new DagOracle.DagNode(index, vc.info.Implementation.Name, 1);
 
             vcNodeMap.Add(vc, node);
             currentDag.AddNode(node);
@@ -2348,7 +2349,7 @@ namespace CoreLib
             RegisterVC(vc);
 
             if (disabled) return;
-            Debug.Assert(cs.callSite.calleeName == vc.info.impl.Name);
+            Debug.Assert(cs.callSite.calleeName == vc.info.Implementation.Name);
 
             var n1 = vcNodeMap[containingVC[cs]];
 
@@ -2357,7 +2358,7 @@ namespace CoreLib
             vcToRecVector.Add(vc, rv2);
 
             // create node
-            var n2 = new DagOracle.DagNode(id2, vc.info.impl.Name, 1);
+            var n2 = new DagOracle.DagNode(id2, vc.info.Implementation.Name, 1);
 
             vcNodeMap.Add(vc, n2);
             currentDag.AddNode(n2);
@@ -2571,7 +2572,7 @@ namespace CoreLib
             foreach (var p in cg.Nodes)
             {
                 procToReachableProcs[p] = new HashSet<string>();
-                sccToReachableScc[procToScc[p]].Iter(scc => procToReachableProcs[p].UnionWith(scc));
+                foreach (var scc in sccToReachableScc[procToScc[p]]) procToReachableProcs[p].UnionWith(scc);
             }
 
             recursiveProcs = BoogieUtil.GetCyclicNodes<string>(cg);
@@ -2579,7 +2580,7 @@ namespace CoreLib
             indexToProc = new string[cg.Nodes.Count];
             procToIndex = new Dictionary<string, int>();
             int i = 0;
-            cg.Nodes.Iter(p => { indexToProc[i] = p; procToIndex[p] = i; i++; });
+            foreach (var p in cg.Nodes) { indexToProc[i] = p; procToIndex[p] = i; i++; }
         }
 
         public int[] GetMainRv()
@@ -2623,8 +2624,8 @@ namespace CoreLib
         public ProgramDisjointness(Program program)
         {
             var map = new Dictionary<string, Implementation>();
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl => map.Add(impl.Name, impl));
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                map.Add(impl.Name, impl);
 
             exclusiveCache = new Dictionary<string, HashSet<Tuple<int, int>>>();
             this.impls = new Dictionary<string, Implementation>(map);
@@ -2686,7 +2687,7 @@ namespace CoreLib
 
             var graph = Program.GraphFromImpl(impl);
             var canReachMe = new Dictionary<Block, HashSet<Block>>();
-            impl.Blocks.Iter(b => canReachMe.Add(b, new HashSet<Block>()));
+            foreach (var b in impl.Blocks) canReachMe.Add(b, new HashSet<Block>());
 
             foreach (var b in graph.TopologicalSort())
             {
@@ -2699,10 +2700,10 @@ namespace CoreLib
             foreach (var b in impl.Blocks)
             {
                 var from = new HashSet<int>();
-                canReachMe[b].Iter(p => from.UnionWith(blockToCalls[p]));
+                foreach (var p in canReachMe[b]) from.UnionWith(blockToCalls[p]);
                 foreach (var tgt in blockToCalls[b])
                 {
-                    from.Iter(src => reachable.Add(Tuple.Create(src, tgt)));
+                    foreach (var src in from) reachable.Add(Tuple.Create(src, tgt));
                 }
             }
 
@@ -2717,8 +2718,8 @@ namespace CoreLib
             var str = new System.IO.StreamWriter(filename);
             str.WriteLine("digraph DAG {");
 
-            graph.Nodes
-                .Iter(n => str.WriteLine("{0} [ label = \"{1}\" color=black shape=box];", n.UniqueId, n.Label));
+            foreach (var n in graph.Nodes)
+                str.WriteLine("{0} [ label = \"{1}\" color=black shape=box];", n.UniqueId, n.Label);
 
             foreach (var edge in graph.Edges)
                 str.WriteLine("{0} -> {1} [ label = \"{2}\"];", edge.Item1.UniqueId, edge.Item2.UniqueId, "");
@@ -2847,7 +2848,7 @@ namespace CoreLib
             RemoveUnreachableNodes();
 
             var ret = 0;
-            Nodes.Iter(node => ret += node.Size);
+            foreach (var node in Nodes) ret += node.Size;
             return ret;
         }
 
@@ -2909,7 +2910,7 @@ namespace CoreLib
             ComputeDagSizes(out nodeToTreeSize, out nodeToChildren);
 
             var ret = new Dictionary<DagNode, HashSet<DagNode>>();
-            Nodes.Iter(n => ret.Add(n, new HashSet<DagNode>()));
+            foreach (var n in Nodes) ret.Add(n, new HashSet<DagNode>());
             AllDisjointNodesHelper(Root, ret, nodeToChildren);
             return ret;
         }
@@ -2990,7 +2991,7 @@ namespace CoreLib
             }
 
             // delete n2
-            todelete.Iter(DeleteEdge);
+            foreach (var edge in todelete) DeleteEdge(edge);
             DeleteNodeAndDecendants(n2);
         }
 
@@ -3001,16 +3002,16 @@ namespace CoreLib
             idToProc = new Dictionary<string, string>();
             
             var impls = new Dictionary<string, Implementation>();
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl => impls.Add(impl.Name, impl));
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                impls.Add(impl.Name, impl);
 
             var ep = program.TopLevelDeclarations.OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"))
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null)
                 .FirstOrDefault();
             main = ep.Name;
 
             var impl2index = new Dictionary<string, int>();
-            impls.Iter(tup => impl2index.Add(tup.Key, impl2index.Count));
+            foreach (var tup in impls) impl2index.Add(tup.Key, impl2index.Count);
 
             var cg = BoogieUtil.GetCallGraph(program);
             var recursiveProcs = BoogieUtil.GetCyclicNodes<string>(cg);
@@ -3077,8 +3078,8 @@ namespace CoreLib
         bool HasExceededRecBound(string impl, int bound)
         {
             if (!extraRecBound.ContainsKey(impl))
-                return (bound > CommandLineOptions.Clo.RecursionBound);
-            return bound > CommandLineOptions.Clo.RecursionBound + extraRecBound[impl];
+                return (bound > BoogieUtil.RecursionBound);
+            return bound > BoogieUtil.RecursionBound + extraRecBound[impl];
         }
 
         // Returns the size of the fully expanded tree
@@ -3097,7 +3098,7 @@ namespace CoreLib
             // id -> #nodes with that id in the fully expanded tree 
             // (used for debugging)
             var id2numnodes = new Dictionary<string, int>();
-            idgraph.Nodes.Iter(s => id2numnodes.Add(s, 0));
+            foreach (var s in idgraph.Nodes) id2numnodes.Add(s, 0);
             id2numnodes[rootid] = 1;
 
             // Start with empty call dag
@@ -3105,8 +3106,8 @@ namespace CoreLib
             AddNode(Root);
 
             var impls = new Dictionary<string, Implementation>();
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl => impls.Add(impl.Name, impl));
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                impls.Add(impl.Name, impl);
 
             // impl to its calls
             var implToCalls = new Dictionary<string, HashSet<Tuple<int, string>>>();
@@ -3133,7 +3134,7 @@ namespace CoreLib
                 var NodeToCalls = new Func<DagNode, List<Tuple<DagNode, int, string>>>(n =>
                     {
                         var r = new List<Tuple<DagNode, int, string>>();
-                        implToCalls[n.ImplName].Iter(t => r.Add(Tuple.Create(n, t.Item1, t.Item2)));
+                        foreach (var t in implToCalls[n.ImplName]) r.Add(Tuple.Create(n, t.Item1, t.Item2));
                         return r;
                     });
 
@@ -3248,7 +3249,7 @@ namespace CoreLib
             */            
 
             var ret = 0;
-            id2numnodes.Iter(tup => ret += tup.Value);
+            foreach (var tup in id2numnodes) ret += tup.Value;
             return ret;
         }
 
@@ -3315,7 +3316,7 @@ namespace CoreLib
                 graph = new Microsoft.Boogie.GraphUtil.Graph<DagNode>();
 
                 // Make sure all the nodes are inserted
-                IdToNodes[id].Iter(n => graph.AddSource(n));
+                foreach (var n in IdToNodes[id]) graph.AddSource(n);
 
                 foreach (var n1 in IdToNodes[id])
                 {
@@ -3336,7 +3337,7 @@ namespace CoreLib
             {
                 // Gather the subset of the dag that we should look at
                 var ancestors = new HashSet<DagNode>();
-                IdToNodes[id].Iter(v => ancestors.UnionWith(Ancestors(v)));
+                foreach (var v in IdToNodes[id]) ancestors.UnionWith(Ancestors(v));
 
                 HashSet<DagNode> tt = null;
                 GetAdjacency(Root, id, out adj, out tt, ancestors);
@@ -3519,8 +3520,7 @@ namespace CoreLib
                 var consider = new HashSet<Node>(color.Keys);
                 consider.IntersectWith(Adj(n));
 
-                consider
-                    .Iter(s => neighborColors.Add(color[s]));
+                foreach (var s in consider) neighborColors.Add(color[s]);
 
                 // find the least c that is not in neightColors
                 var c = 0;
@@ -3646,7 +3646,7 @@ namespace CoreLib
 
         public void DeleteNodeAndDecendants(DagNode node)
         {
-            Decendants(node).Iter(DeleteNode);
+            foreach (var n in Decendants(node)) DeleteNode(n);
         }
 
         public static DagOracle ConstructCallDag(Program program, Dictionary<string, int> extraRecBound)
@@ -3654,11 +3654,11 @@ namespace CoreLib
             var ret = new DagOracle(program, extraRecBound);
 
             var impls = new Dictionary<string, Implementation>();
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl => impls.Add(impl.Name, impl));
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                impls.Add(impl.Name, impl);
 
             var ep = program.TopLevelDeclarations.OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"))
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null)
                 .FirstOrDefault();
 
             var implToCalls = new Dictionary<string, HashSet<Tuple<int, string>>>();
@@ -3678,7 +3678,7 @@ namespace CoreLib
             }
 
             var impl2index = new Dictionary<string, int>();
-            impls.Iter(tup => impl2index.Add(tup.Key, impl2index.Count));
+            foreach (var tup in impls) impl2index.Add(tup.Key, impl2index.Count);
 
             var cg = BoogieUtil.GetCallGraph(program);
             var recursiveProcs = BoogieUtil.GetCyclicNodes<string>(cg);
@@ -3775,7 +3775,7 @@ namespace CoreLib
 
             // First, let us color the out-going edges of n
             var graph = new Microsoft.Boogie.GraphUtil.Graph<DagNode>();
-            Children[node].Iter(e => graph.AddSource(e.Target));
+            foreach (var e in Children[node]) graph.AddSource(e.Target);
 
             foreach (var e1 in Children[node])
             {
@@ -3795,7 +3795,7 @@ namespace CoreLib
             var colorToNodes = new Dictionary<int, HashSet<DagNode>>();
             for (int i = 0; i <= maxcolor; i++)
                 colorToNodes.Add(i, new HashSet<DagNode>());
-            coloring.Iter(tup => colorToNodes[tup.Value].Add(tup.Key));
+            foreach (var tup in coloring) colorToNodes[tup.Value].Add(tup.Key);
 
             // Node to its mincolor mapping
             var nodeToMinColorAvailable = new Dictionary<DagNode, Dictionary<string, int>>();
@@ -3941,7 +3941,7 @@ namespace CoreLib
 
             var delete = new HashSet<DagNode>(Nodes);
             delete.ExceptWith(reached);
-            delete.Iter(DeleteNode);
+            foreach (var n in delete) DeleteNode(n);
         }
 
         HashSet<DagNode> Decendants(DagNode node)
@@ -3951,8 +3951,8 @@ namespace CoreLib
             while (frontier.Any())
             {
                 var next = new HashSet<DagNode>();
-                frontier.Iter(n =>
-                    Children[n].Iter(e => next.Add(e.Target)));
+                foreach (var n in frontier)
+                    foreach (var e in Children[n]) next.Add(e.Target);
                 next.ExceptWith(reached);
                 frontier = next;
                 reached.UnionWith(next);
@@ -3975,8 +3975,8 @@ namespace CoreLib
             var str = new System.IO.StreamWriter(filename);
             str.WriteLine("digraph DAG {");
 
-            nodes
-                .Iter(n => str.WriteLine("{0} [ label = \"{1}\" color=black shape=box];", n.uid, n.ImplName));
+            foreach (var n in nodes)
+                str.WriteLine("{0} [ label = \"{1}\" color=black shape=box];", n.uid, n.ImplName);
 
             foreach (var edge in Edges.Where(e => nodes.Contains(e.Source) && nodes.Contains(e.Target)))
                 str.WriteLine("{0} -> {1} [ label = \"{2}\"];", edge.Source.uid, edge.Target.uid, edge.CallSite);
@@ -4001,8 +4001,8 @@ namespace CoreLib
             var nodeToTreeSize = new Dictionary<DagNode, int>();
             var nodeToChildren = new Dictionary<DagNode, HashSet<DagNode>>();
 
-            Nodes.Iter(vc => nodeToTreeSize.Add(vc, 0));
-            Nodes.Iter(vc => nodeToChildren.Add(vc, new HashSet<DagNode>()));
+            foreach (var vc in Nodes) nodeToTreeSize.Add(vc, 0);
+            foreach (var vc in Nodes) nodeToChildren.Add(vc, new HashSet<DagNode>());
 
             foreach (var n in sorted)
             {
@@ -4050,7 +4050,7 @@ namespace CoreLib
             if (largestnode != null)
             {
                 Console.WriteLine("Shared node size distribution");
-                hist.Iter(tup => Console.Write("{0}: {1}  ", tup.Key, tup.Value));
+                foreach (var tup in hist) Console.Write("{0}: {1}  ", tup.Key, tup.Value);
                 Console.WriteLine();
 
                 Console.WriteLine("Largest shared subtree has size {0}, tree size {1}, for proc {2}", largestsize,
@@ -4071,7 +4071,8 @@ namespace CoreLib
 
     public class EmptyErrorReporter : ProverInterface.ErrorHandler
     {
-        public override void OnModel(IList<string> labels, Model model, ProverInterface.Outcome proverOutcome) { }
+        public EmptyErrorReporter() : base(BoogieUtil.BoogieOptions) { }
+        public override void OnModel(IList<string> labels, Model model, SolverOutcome proverOutcome) { }
     }
 
     public class InsufficientDetailsToConstructCexPath : Exception
@@ -4094,6 +4095,7 @@ namespace CoreLib
         List<Tuple<int, int>> orderedStateIds;
 
         public StratifiedInliningErrorReporter(VerifierCallback callback, StratifiedInlining si, StratifiedVC mainVC)
+            : base(BoogieUtil.BoogieOptions)
         {
             this.callback = callback;
             this.si = si;
@@ -4109,9 +4111,9 @@ namespace CoreLib
 
         private Absy Label2Absy(string procName, string label)
         {
-            int id = int.Parse(label);
-            var l2a = si.implName2StratifiedInliningInfo[procName].label2absy;
-            return (Absy)l2a[id];
+            // label2absy is no longer available in Boogie 3.5.6
+            // This code path is only used when SIBoolControlVC is false
+            throw new NotImplementedException("Label2Absy is not supported in Boogie 3.5.6 (label2absy field removed). Use SIBoolControlVC mode.");
         }
 
         public override void OnProverError(string message)
@@ -4134,10 +4136,10 @@ namespace CoreLib
             System.Threading.Tasks.Task.WaitAll(t1, t2);
         }
 
-        public override void OnModel(IList<string> labels, Model model, ProverInterface.Outcome proverOutcome)
+        public override void OnModel(IList<string> labels, Model model, SolverOutcome proverOutcome)
         {
             // Timeout?
-            if (proverOutcome != ProverInterface.Outcome.Invalid)
+            if (proverOutcome != SolverOutcome.Invalid)
                 return;
 
             var start = DateTime.Now;
@@ -4162,7 +4164,7 @@ namespace CoreLib
         // returns a list of blocks followed by a fake assert
         private List<Absy> GetAbsyTrace(StratifiedVC svc, IList<string> labels)
         {
-            if (CommandLineOptions.Clo.SIBoolControlVC)
+            if (BoogieUtil.BoogieOptions.SIBoolControlVC)
                 return GetAbsyTraceBoolControlVC(svc);
             else
                 return GetAbsyTraceControlFlowVariable(svc, labels);
@@ -4172,22 +4174,23 @@ namespace CoreLib
         {
             if (labels == null)
             {
-                labels = si.prover.CalculatePath(svc.id);
+                // CalculatePath was removed in Boogie 3.5.6; labels are provided via OnModel callback
+                labels = new string[0];
             }
             var ret = new List<Absy>();
             foreach (var label in labels)
             {
-                ret.Add(Label2Absy(svc.info.impl.Name, label));
+                ret.Add(Label2Absy(svc.info.Implementation.Name, label));
             }
             return ret;
         }
 
         private List<Absy> GetAbsyTraceBoolControlVC(StratifiedVC svc)
         {
-            Debug.Assert(CommandLineOptions.Clo.UseProverEvaluate, "Must use prover evaluate option with boolControlVC"); 
+            Debug.Assert(BoogieUtil.BoogieOptions.UseProverEvaluate, "Must use prover evaluate option with boolControlVC"); 
             
             var ret = new List<Absy>();
-            var impl = svc.info.impl;
+            var impl = svc.info.Implementation;
             var block = impl.Blocks[0];
 
             while (true)
@@ -4196,9 +4199,9 @@ namespace CoreLib
                 var gc = block.TransferCmd as GotoCmd;
                 if (gc == null) break;
                 Block next = null;
-                foreach (var succ in gc.labelTargets)
+                foreach (var succ in gc.LabelTargets)
                 {
-                    var succtaken = (bool)svc.info.vcgen.prover.Evaluate(svc.blockToControlVar[succ]);
+                    var succtaken = (bool)svc.info.vcgen.prover.Evaluate(svc.blockToControlVar[succ]).GetAwaiter().GetResult();
                     if (succtaken)
                     {
                         next = succ;
@@ -4246,16 +4249,16 @@ namespace CoreLib
                         }
                     }
                 }
-                if (svc.recordProcCallSites.ContainsKey(b) && (model != null || CommandLineOptions.Clo.UseProverEvaluate))
+                if (svc.recordProcCallSites.ContainsKey(b) && (model != null || BoogieUtil.BoogieOptions.UseProverEvaluate))
                 {
                     foreach (StratifiedCallSite scs in svc.recordProcCallSites[b])
                     {
                         var args = new List<object>();
                         foreach (VCExpr expr in scs.interfaceExprs)
                         {
-                            if (model == null && CommandLineOptions.Clo.UseProverEvaluate)
+                            if (model == null && BoogieUtil.BoogieOptions.UseProverEvaluate)
                             {
-                                args.Add(svc.info.vcgen.prover.Evaluate(expr));
+                                args.Add(svc.info.vcgen.prover.Evaluate(expr).GetAwaiter().GetResult());
                             }
                             else
                             {
@@ -4303,7 +4306,7 @@ namespace CoreLib
             }
 
             Block lastBlock = (Block)absyList[absyList.Count - 2];
-            Counterexample newCounterexample = VC.VCGen.AssertCmdToCounterexample(assertCmd, lastBlock.TransferCmd, trace, null, model, svc.info.mvInfo, si.prover.Context);
+            Counterexample newCounterexample = VC.VerificationConditionGenerator.AssertCmdToCounterexample(BoogieUtil.BoogieOptions, assertCmd, lastBlock.TransferCmd, trace, null, model, svc.info.mvInfo, si.prover.Context, null);
             newCounterexample.AddCalleeCounterexample(calleeCounterexamples);
             return newCounterexample;
         }

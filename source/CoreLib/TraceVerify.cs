@@ -79,9 +79,9 @@ namespace cba
 
             // Gather the uninterpreted sorts
             var sorts = new Dictionary<string, Microsoft.Boogie.Type>(); 
-            uvalueToConstants.Values
-                .Iter(s => s
-                    .Iter(c => sorts[c.TypedIdent.Type.AsCtor.Decl.Name] = c.TypedIdent.Type));
+            foreach (var s in uvalueToConstants.Values)
+                foreach (var c in s)
+                    sorts[c.TypedIdent.Type.AsCtor.Decl.Name] = c.TypedIdent.Type;
 
             foreach (var sort in sorts.Values)
             {
@@ -98,8 +98,8 @@ namespace cba
                 {
                     Expr expr = Expr.True;
                     var uconst = uvalueToUniqueConst[tup.Key];
-                    tup.Value.Where(c => c.TypedIdent.Type.AsCtor.Decl.Name == sort.AsCtor.Decl.Name)
-                        .Iter(c => expr = Expr.And(expr, Expr.Eq(Expr.Ident(c), Expr.Ident(uconst))));
+                    foreach (var c in tup.Value.Where(c => c.TypedIdent.Type.AsCtor.Decl.Name == sort.AsCtor.Decl.Name))
+                        expr = Expr.And(expr, Expr.Eq(Expr.Ident(c), Expr.Ident(uconst)));
                     if (expr != Expr.True)
                         output.AddTopLevelDeclaration(new Axiom(Token.NoToken, expr));
                 }
@@ -121,7 +121,7 @@ namespace cba
 
             output.AddTopLevelDeclaration(
                 new Procedure(Token.NoToken, newName, proc.TypeParameters, proc.InParams,
-                    proc.OutParams, proc.Requires, proc.Modifies, proc.Ensures,
+                    proc.OutParams, false, proc.Requires, null, proc.Ensures, proc.Modifies,
                     proc.Attributes));
 
             // Now to peice together the commands from the implementation. We keep around
@@ -141,9 +141,8 @@ namespace cba
             {
                 Block curr = labelToBlock[trace.Blocks[i].blockName];
 
-                Block traceBlock = new Block();
-                traceBlock.Cmds = new List<Cmd>();
-                traceBlock.Label = addIntToString(trace.Blocks[i].blockName, i); // (The "i" is to deal with loops)
+                Block traceBlock = new Block(Token.NoToken, addIntToString(trace.Blocks[i].blockName, i), new List<Cmd>(), new ReturnCmd(Token.NoToken));
+                // (The "i" is to deal with loops)
                 if (i != n - 1)
                 {
                     traceBlock.TransferCmd = BoogieAstFactory.MkGotoCmd(addIntToString(trace.Blocks[i + 1].blockName, i + 1));
@@ -167,7 +166,7 @@ namespace cba
                 }
                 else if (curr.TransferCmd is GotoCmd)
                 {
-                    List<String> targets = (curr.TransferCmd as GotoCmd).labelNames;
+                    List<String> targets = (curr.TransferCmd as GotoCmd).LabelNames;
                     // one of these targets should be the next label
                     if (i != n - 1)
                     {
@@ -371,7 +370,7 @@ namespace cba
                 if (node.TransferCmd is GotoCmd)
                 {
                     var gc = node.TransferCmd as GotoCmd;
-                    foreach (string s in gc.labelNames)
+                    foreach (string s in gc.LabelNames)
                     {
                         stack.Add(labelBlockMap[s]);
                     }
@@ -443,7 +442,7 @@ namespace cba
             foreach (var p in newProcsToAdd)
             {
                 var proc = new Procedure(Token.NoToken, p, new List<TypeVariable>(),
-                    new List<Variable>(), new List<Variable>(), new List<Requires>(), new List<IdentifierExpr>(), new List<Ensures>());
+                    new List<Variable>(), new List<Variable>(), false, new List<Requires>(), null, new List<Ensures>(), new List<IdentifierExpr>());
                 output.AddTopLevelDeclaration(proc);
             }
 

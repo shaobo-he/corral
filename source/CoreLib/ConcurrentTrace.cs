@@ -358,7 +358,7 @@ namespace cba
         private static void setupPrint(PersistentCBAProgram program, ErrorTrace trace, string file)
         {
             // Set output files
-            pathFile = file == null ? null : new TokenTextWriter(file + "_trace.txt");
+            pathFile = file == null ? null : new TokenTextWriter(file + "_trace.txt", BoogieUtil.BoogieOptions);
             if(pathFile != null) program.writeToFile(file + ".bpl");
             Program prog = program.getProgram();
 
@@ -389,7 +389,7 @@ namespace cba
             varNamesChanged = false;
             varNameMap = new Dictionary<string, string>();
             var globals = BoogieUtil.GetGlobalVariables(program);
-            globals.Iter(g => varNameMap.Add(g.Name + "__0", g.Name));
+            foreach (var g in globals) varNameMap.Add(g.Name + "__0", g.Name);
         }
 
         // Model variable names changed?
@@ -725,7 +725,7 @@ namespace cba
         private static void arrangeEvents()
         {
             // Check that all events are valid
-            events.Iter(ev => Debug.Assert(ev.tid > 0 && ev.k >= 0));
+            foreach (var ev in events) Debug.Assert(ev.tid > 0 && ev.k >= 0);
 
             // Split the list of events based on k. 
             // Also construct a map from k to the set of threads that
