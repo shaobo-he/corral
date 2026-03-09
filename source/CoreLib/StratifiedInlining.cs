@@ -1869,7 +1869,8 @@ namespace CoreLib
         {
             stats.calls++;
             var stopwatch = Stopwatch.StartNew();
-            prover.Check();
+            // prover.Check() removed: in Boogie 3.5.6, CheckAssumptions handles the full
+            // push/check-sat/pop cycle internally; Check() is now a NotImplementedException stub
             var (solverOutcome, _) = prover.CheckAssumptions(new List<VCExpr>(), reporter, CancellationToken.None).GetAwaiter().GetResult();
             stats.time += stopwatch.ElapsedTicks;
             return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
