@@ -145,6 +145,9 @@ namespace cba
                 doRefinementInZ3Helper(out faProgProg, out boolVars, out fabs);
                 ProgTransformation.PersistentProgramIO.CheckMemoryPressure();
 
+                if (boolVars.Count == 0)
+                    throw new InternalError("Refinement unable to make progress");
+
                 boolVars = BoogieVerify.FindLeastToVerify(faProgProg, boolVars);
                 // Debug.Assert(boolVars.Count > 0);
                 if (boolVars.Count == 0)
@@ -238,8 +241,6 @@ namespace cba
             fabs = new FullVariableAbstraction(p, initialTrackedTokens, allTokens.Difference(initialTrackedTokensUpperBound), refinementState);
             var faProg = fabs.doTransformation(out boolVars);
             fabs.FreeMemory();
-            //faProg.writeToFile("RefineOut.bpl");
-            Debug.Assert(boolVars.Count > 0);
 
             // Inline, if necessary
             // ********* missing **********
@@ -769,7 +770,7 @@ namespace cba
 
             this.tokens = refinementState.allTokens.Difference(tracked).Difference(dontTrack);
             this.varsToInstrument = new HashSet<string>();
-            
+
             int cnt = 0;
             foreach (var token in tokens)
             {

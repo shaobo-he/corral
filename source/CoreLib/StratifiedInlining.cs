@@ -1667,18 +1667,24 @@ namespace CoreLib
 
                     outcome = Fwd(openCallSites, reporter, true, currRecursionBound);
 
-                    // timeout?
-                    if (outcome == Outcome.Inconclusive || outcome == Outcome.OutOfMemory || outcome == Outcome.TimedOut)
+                    // timeout or OOM?
+                    if (outcome == Outcome.OutOfMemory || outcome == Outcome.TimedOut)
                         break;
 
-                    // reached bound?
-                    if (outcome == VcOutcome.Inconclusive && currRecursionBound < BoogieUtil.RecursionBound)
+                    // Boogie 3.5.6 merged ReachedBound into Inconclusive.
+                    // Distinguish "reached bound" (can retry with higher bound)
+                    // from "true inconclusive" by checking procsHitRecBound.
+                    if (outcome == VcOutcome.Inconclusive && procsHitRecBound.Count > 0 && currRecursionBound < BoogieUtil.RecursionBound)
                     {
                         if(StratifiedInliningVerbose > 0)
                             Console.WriteLine("SI: Exhausted recursion bound of {0}", currRecursionBound);
                         currRecursionBound++;
                         continue;
                     }
+
+                    // true inconclusive (no bound hit) or reached max bound
+                    if (outcome == Outcome.Inconclusive)
+                        break;
 
                     //Console.WriteLine("Concluding verdict at rec bound {0}", currRecursionBound);
 
@@ -4144,7 +4150,19 @@ namespace CoreLib
                 return;
 
             var start = DateTime.Now;
-            List<Absy> absyList = GetAbsyTrace(mainVC, labels);
+            List<Absy> absyList;
+            try
+            {
+                absyList = GetAbsyTrace(mainVC, labels);
+            }
+            catch (NotImplementedException)
+            {
+                // Label2Absy unavailable in Boogie 3.5.6 without SIBoolControlVC;
+                // report bug found but skip trace construction
+                ttime += (DateTime.Now - start);
+                callback.OnCounterexample(null, null);
+                return;
+            }
             orderedStateIds = new List<Tuple<int, int>>();
 
             var cex = NewTrace(mainVC, absyList, model);

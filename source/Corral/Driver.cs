@@ -87,7 +87,7 @@ namespace cba
             string boogieOptions = "";
             boogieOptions += config.boogieOpts;
 
-            boogieOptions += "/extractLoops /errorLimit:1 ";
+            boogieOptions += "/errorLimit:1 ";
 
             // /recursionBound was removed from Boogie 3.5.6's option parser; set directly
             // /removeEmptyBlocks is needed for field refinement. It ensures that
@@ -105,8 +105,7 @@ namespace cba
             // Boogie 3.5.6 CheckAssumptions always calls (get-unsat-core) on Valid results;
             // enable unsat core production so z3 doesn't reject the request
             BoogieUtil.BoogieOptions.EnableUnSatCoreExtract = 1;
-            // Boogie 3.5.6 removed label2absy; use bool control VC mode for trace extraction
-            BoogieUtil.BoogieOptions.SIBoolControlVC = true;
+            // SIBoolControlVC is set per-phase via BoogieVerifyOptions.Set()
             BoogieUtil.BoogieOptions.UseProverEvaluate = true;
 
             InstrumentationConfig.UseOldInstrumentation = false;
@@ -354,8 +353,6 @@ namespace cba
                     location.Item2.Cmds[i] = BoogieAstFactory.MkAssume(Expr.True);
                 }
             }
-
-            BoogieUtil.PrintProgram(prog, "next.bpl");
 
             return new PersistentCBAProgram(prog, prog.mainProcName, prog.contextBound, program.mode);
         }

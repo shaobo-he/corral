@@ -235,7 +235,7 @@ namespace cba
 
         public static void Initialize(Configs config)
         {
-            // Program
+            // Program (SIBoolControlVC needed for trace extraction in Boogie 3.5.6)
             progVerifyOptions = new BoogieVerifyOptions();
             progVerifyOptions.CallTree = new HashSet<string>();
             progVerifyOptions.UseProverEvaluate = config.useProverEvaluate;
@@ -243,6 +243,7 @@ namespace cba
             progVerifyOptions.useFwdBck = false;
             progVerifyOptions.useDI = false;
             progVerifyOptions.newStratifiedInliningAlgo = "";
+            progVerifyOptions.SIBoolControlVC = true;
 
             // Path
             pathVerifyOptions = new BoogieVerifyOptions();
@@ -252,6 +253,7 @@ namespace cba
             pathVerifyOptions.useFwdBck = false;
             pathVerifyOptions.useDI = false;
             pathVerifyOptions.newStratifiedInliningAlgo = "";
+            pathVerifyOptions.SIBoolControlVC = true;
             if (config.printData == 2)
             {
                 pathVerifyOptions.StratifiedInliningWithoutModels = false;

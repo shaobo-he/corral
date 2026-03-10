@@ -1152,7 +1152,7 @@ namespace cba
             }
 
             info = new Dictionary<string, Dictionary<string, string>>();
-            
+
             // Construct the set of procs in the original program
             // and the loop procedures
             allProcs = new HashSet<string>();
@@ -1167,12 +1167,6 @@ namespace cba
                     impl.Proc.AddAttribute("LoopProcedure");
                 }
             }
-            
-            //foreach (var impl in BoogieUtil.GetImplementations(p))
-            //{
-                //removeAssumeFalseBlocks(impl);
-            //}
-
 
             // Optimization: if no loop is found, then no need to print
             // out a new program

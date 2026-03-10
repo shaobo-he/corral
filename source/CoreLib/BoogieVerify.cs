@@ -156,6 +156,72 @@ namespace cba.Util
                 .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null));
 
 
+            // Extract loops into recursive procedures before VCGen. Boogie 3.5.6's
+            // SIBoolControlVC passification drops assignments before loop headers.
+            // Loop extraction converts loops to recursive procedures, eliminating
+            // back-edges so passification works correctly. StratifiedInlining then
+            // explores the extracted loop procedures up to the recursion bound,
+            // which correctly handles nested loops (each nesting level gets its
+            // own recursion budget).
+            var extractionInfo = LoopExtractor.ExtractLoops(BoogieUtil.BoogieOptions, program);
+            program.Resolve(BoogieUtil.BoogieOptions);
+            program.Typecheck(BoogieUtil.BoogieOptions);
+
+            // Recompute mains since LoopExtractor may have modified declarations
+            mains = new List<Implementation>(
+                program.TopLevelDeclarations
+                .OfType<Implementation>()
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null));
+
+            // After loop extraction, propagate modifies clauses to extracted loop
+            // procedures. Boogie 3.5.6's LoopExtractor doesn't propagate modifies
+            // from callees, so StratifiedInlining's over-approximation incorrectly
+            // assumes loop procedures don't modify globals. We do a fixed-point
+            // computation to handle transitive calls between loop procedures.
+            {
+                var changed = true;
+                while (changed)
+                {
+                    changed = false;
+                    foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                    {
+                        if (!(impl.Proc is LoopProcedure)) continue;
+
+                        var existingMods = new HashSet<string>(impl.Proc.Modifies.Select(ie => ie.Decl.Name));
+                        var newMods = new HashSet<string>();
+
+                        foreach (var blk in impl.Blocks)
+                        {
+                            foreach (var cmd in blk.Cmds)
+                            {
+                                if (cmd is CallCmd cc && cc.Proc != null)
+                                {
+                                    foreach (var ie in cc.Proc.Modifies)
+                                    {
+                                        if (!existingMods.Contains(ie.Decl.Name))
+                                            newMods.Add(ie.Decl.Name);
+                                    }
+                                }
+                            }
+                        }
+
+                        if (newMods.Count > 0)
+                        {
+                            foreach (var gv in program.TopLevelDeclarations.OfType<GlobalVariable>())
+                            {
+                                if (newMods.Contains(gv.Name))
+                                    impl.Proc.Modifies.Add(new IdentifierExpr(Token.NoToken, gv));
+                            }
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            // Note: origProg was built before loop extraction (lines above).
+            // ExtractLoopTrace maps traces back to pre-extraction blocks,
+            // so origProg correctly has the original implementations.
+
             CoreLib.StratifiedInlining vcgen = null;
             try
             {
@@ -221,6 +287,9 @@ namespace cba.Util
                     case VC.VcOutcome.Errors:
                         break;
                     case VC.VcOutcome.Inconclusive:
+                        // Reached recursion bound (e.g. from loop extraction); no bug found within bound
+                        ret = ReturnStatus.ReachedBound;
+                        break;
                     case VC.VcOutcome.SolverException:
                         throw new InternalError("z3 says inconclusive");
                     case VC.VcOutcome.OutOfMemory:
@@ -239,7 +308,7 @@ namespace cba.Util
                 Log.WriteLine(Log.Debug, outcome.ToString());
 
                 Log.WriteLine(Log.Debug, (errors == null ? 0 : errors.Count) + " counterexamples.");
-                if (errors != null) ret = ReturnStatus.NOK;
+                if (outcome == VC.VcOutcome.Errors) ret = ReturnStatus.NOK;
 
                 // Print model
                 if (errors != null && errors.Count > 0 && errors[0].Model != null && BoogieUtil.BoogieOptions.ModelViewFile != null)
@@ -265,6 +334,12 @@ namespace cba.Util
                     for (int i = 0; i < errors.Count; i++)
                     {
                         //errors[i].Print(1, Console.Out);
+
+                        // Map the trace across loop extraction
+                        if (extractionInfo != null)
+                        {
+                            errors[i] = vcgen.ExtractLoopTrace(errors[i], impl.Name, program, extractionInfo);
+                        }
 
                         if (errors[i] is AssertCounterexample)
                         {
@@ -670,6 +745,16 @@ namespace cba.Util
 
                 Block ib;
                 originalBlocks.TryGetValue(b.Label, out ib);
+
+                // If not found, try stripping LoopUnroll's #N suffix to map
+                // unrolled blocks back to the original block.
+                if (ib == null)
+                {
+                    var sanitized = LoopUnroll.sanitizeLabel(b.Label);
+                    if (sanitized != b.Label)
+                        originalBlocks.TryGetValue(sanitized, out ib);
+                }
+
                 if (ib == null)
                 {
                     // Such blocks correspond to "itermediate" blocks inserted
@@ -803,6 +888,10 @@ namespace cba.Util
         public Dictionary<string, int> extraRecBound;
         public HashSet<string> extraFlags;
 
+        // SIBoolControlVC mode (needed for trace extraction in Boogie 3.5.6,
+        // but should be off for path/refinement checks to avoid spurious results)
+        public bool SIBoolControlVC;
+
         // Default options
         public BoogieVerifyOptions()
         {
@@ -820,6 +909,7 @@ namespace cba.Util
             useDI = false;
             extraFlags = new HashSet<string>();
             maxInlinedBound = 0;
+            SIBoolControlVC = false;
         }
 
         public BoogieVerifyOptions Copy()
@@ -843,6 +933,7 @@ namespace cba.Util
             ret.maxInlinedBound = maxInlinedBound;
             ret.extraRecBound = new Dictionary<string, int>(ret.extraRecBound);
             ret.extraFlags.UnionWith(extraFlags);
+            ret.SIBoolControlVC = SIBoolControlVC;
 
             return ret;
         }
@@ -854,6 +945,7 @@ namespace cba.Util
             BoogieUtil.BoogieOptions.StratifiedInlining = StratifiedInlining;
             BoogieUtil.BoogieOptions.StratifiedInliningWithoutModels = StratifiedInliningWithoutModels;
             BoogieUtil.BoogieOptions.UseProverEvaluate = UseProverEvaluate;
+            BoogieUtil.BoogieOptions.SIBoolControlVC = SIBoolControlVC;
             if (!StratifiedInliningWithoutModels && ModelViewFile != null)
                 BoogieUtil.BoogieOptions.ModelViewFile = ModelViewFile;
         }
