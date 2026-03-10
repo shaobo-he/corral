@@ -105,6 +105,9 @@ namespace cba
             // Boogie 3.5.6 CheckAssumptions always calls (get-unsat-core) on Valid results;
             // enable unsat core production so z3 doesn't reject the request
             BoogieUtil.BoogieOptions.EnableUnSatCoreExtract = 1;
+            // Boogie 3.5.6 removed label2absy; use bool control VC mode for trace extraction
+            BoogieUtil.BoogieOptions.SIBoolControlVC = true;
+            BoogieUtil.BoogieOptions.UseProverEvaluate = true;
 
             InstrumentationConfig.UseOldInstrumentation = false;
             VariableSlicing.UseSimpleSlicing = false;

@@ -3027,7 +3027,7 @@ namespace cba
             ErrorTrace ptrace = null;
             foreach (var blk in trace.Blocks)
             {
-                var c = blk.Cmds.OfType<CallInstr>().First(cmd => cmd.callee == OldMainName);
+                var c = blk.Cmds.OfType<CallInstr>().FirstOrDefault(cmd => cmd.callee == OldMainName);
                 if (c == null) continue;
                 ptrace = c.calleeTrace;
                 break;

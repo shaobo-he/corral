@@ -59,6 +59,15 @@ namespace cba
                 // Concretization: map back the trace to the original program
                 var trace4 = cp4.trace;
 
+                if (trace4 == null)
+                {
+                    // Trace construction failed; report bug without trace details
+                    cex = null;
+                    tinfo = new InsertionTrans();
+                    pout = cp1.getInput();
+                    return false;
+                }
+
                 var trace1 = cp1.mapBackTrace(trace4);
 
                 cex = trace1;

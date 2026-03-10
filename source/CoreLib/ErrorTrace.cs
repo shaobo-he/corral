@@ -561,6 +561,7 @@ namespace cba
 
         private static int fillInContextSwitchInfo(ErrorTrace trace, int k, int tid)
         {
+            if (trace == null) return k;
             foreach (var blk in trace.Blocks)
             {
                 fetchInfo(blk.info, ref k, ref tid);

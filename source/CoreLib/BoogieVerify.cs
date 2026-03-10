@@ -720,16 +720,21 @@ namespace cba.Util
                     {
                         Cmd c = ib.Cmds[numInstr];
 
-                        if (!(c is CallCmd))
-                            continue;
+                        // Extract callee name from CallCmd or passified AssumeCmd (SIBoolControlVC mode)
+                        string cmdCalleeName = null;
+                        if (c is CallCmd cc2)
+                            cmdCalleeName = cc2.Proc.Name;
+                        else if (c is AssumeCmd ac && ac.Expr is NAryExpr nary)
+                            cmdCalleeName = nary.Fun.FunctionName;
 
-                        var cc = c as CallCmd;
+                        if (cmdCalleeName == null)
+                            continue;
 
                         // No more calls left to process
                         if (calleeTraces.Count <= currCount)
                             break;
 
-                        if (cc.Proc.Name != calleeTraces[currCount].fst)
+                        if (cmdCalleeName != calleeTraces[currCount].fst)
                             continue;
 
                         // Check if this proc has an implementation
@@ -753,6 +758,7 @@ namespace cba.Util
             trace.Trace = newBlocks;
             // reset other info. Safe thing to do unless we know what it is
             trace.CalleeCounterexamples = newCalleeTraces;
+
         }
     }
 

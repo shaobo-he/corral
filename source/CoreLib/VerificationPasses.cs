@@ -305,6 +305,17 @@ namespace cba
         // is expected to be a trace from entry to exit of the procedure or not
         //
         // captureStateIndex: current index into btrace.model.States
+        // Extract callee name from a command: either a CallCmd or a passified AssumeCmd
+        // (in SIBoolControlVC mode, CallCmd is desugared into AssumeCmd with NAryExpr)
+        private static string GetCalleeName(Cmd c)
+        {
+            if (c is CallCmd cc)
+                return cc.Proc.Name;
+            if (c is AssumeCmd ac && ac.Expr is NAryExpr nary)
+                return nary.Fun.FunctionName;
+            return null;
+        }
+
         protected ErrorTrace constructErrorTrace(Counterexample btrace, string procName,
             bool completeTrace, ref int captureStateIndex)
         {
@@ -329,13 +340,13 @@ namespace cba
 
                     if (btrace.CalleeCounterexamples.ContainsKey(loc))
                     {
+                        var calleeName = GetCalleeName(c);
                         ErrorTrace calleeTrace = constructErrorTrace(
-                             btrace.CalleeCounterexamples[loc].Counterexample, (c as CallCmd).Proc.Name, true, ref captureStateIndex);
+                             btrace.CalleeCounterexamples[loc].Counterexample, calleeName, true, ref captureStateIndex);
                         var info = new InstrInfo();
                         var cc = c as CallCmd;
-                        Debug.Assert(cc != null);
 
-                        if (cc.Proc.Name == recordIntArgProc || cc.Proc.Name == recordBoolArgProc )
+                        if (cc != null && (cc.Proc.Name == recordIntArgProc || cc.Proc.Name == recordBoolArgProc))
                         {
                             Debug.Assert(recordTransformationHappened);
                             Debug.Assert(btrace.CalleeCounterexamples[loc].Args.Count == 1);
@@ -375,7 +386,7 @@ namespace cba
                                 etblk.info.addVal((cc.Ins[0] as IdentifierExpr).Name, v);
                             continue;
                         }
-                        if (cc.Proc.Name.StartsWith(recordArgProcPrefix))
+                        if (cc != null && cc.Proc.Name.StartsWith(recordArgProcPrefix))
                         {
                             Debug.Assert(btrace.CalleeCounterexamples[loc].Args.Count == 1);
                             //Debug.Assert(cc.Ins[0] is IdentifierExpr);
@@ -386,7 +397,7 @@ namespace cba
                                 info.addVal("si_arg", v);
                             }
                         }
-                        instr = new CallInstr(cc.Proc.Name, calleeTrace, false, info);
+                        instr = new CallInstr(calleeName, calleeTrace, false, info);
                     }
                     else if (c is CallCmd)
                     {
@@ -431,7 +442,10 @@ namespace cba
                 }
                 if (lastBlkLen == -1)
                 {
-                    throw new InternalError("Failed to find the failing assert");
+                    // In SIBoolControlVC mode, the failing assert is tracked in the
+                    // Counterexample object, not embedded in the last block's commands.
+                    // Process all commands in the last block.
+                    lastBlkLen = lastBlk.Cmds.Count - 1;
                 }
             }
 
@@ -446,14 +460,14 @@ namespace cba
                 ErrorTraceInstr instr = null;
                 if (btrace.CalleeCounterexamples.ContainsKey(loc))
                 {
+                    var calleeName = GetCalleeName(c);
                     var calleeTrace = constructErrorTrace(
-                        btrace.CalleeCounterexamples[loc].Counterexample, (c as CallCmd).Proc.Name, true, ref captureStateIndex);
+                        btrace.CalleeCounterexamples[loc].Counterexample, calleeName, true, ref captureStateIndex);
                     var info = new InstrInfo();
 
                     var cc = c as CallCmd;
-                    Debug.Assert(cc != null);
 
-                    if (cc.Proc.Name == recordIntArgProc || cc.Proc.Name == recordBoolArgProc)
+                    if (cc != null && (cc.Proc.Name == recordIntArgProc || cc.Proc.Name == recordBoolArgProc))
                     {
                         Debug.Assert(recordTransformationHappened);
                         Debug.Assert(btrace.CalleeCounterexamples[loc].Args.Count == 1);
@@ -493,7 +507,7 @@ namespace cba
                             lastEtBlk.info.addVal((cc.Ins[0] as IdentifierExpr).Name, v);
                         continue;
                     }
-                    else if (cc.Proc.Name.StartsWith(recordArgProcPrefix))
+                    else if (cc != null && cc.Proc.Name.StartsWith(recordArgProcPrefix))
                     {
                         Debug.Assert(btrace.CalleeCounterexamples[loc].Args.Count == 1);
                         //Debug.Assert(cc.Ins[0] is IdentifierExpr);
@@ -505,7 +519,7 @@ namespace cba
                         }
                     }
 
-                    instr = new CallInstr(cc.Proc.Name, calleeTrace, false, info);
+                    instr = new CallInstr(calleeName, calleeTrace, false, info);
                 }
                 else if (c is CallCmd)
                 {

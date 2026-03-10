@@ -145,6 +145,7 @@ namespace cba
         // map back "trace" through this transformation
         public ErrorTrace mapBackTrace(ErrorTrace trace)
         {
+            if (trace == null) return null;
             var ret = new ErrorTrace(trace.procName);
             foreach (var blk in trace.Blocks)
             {
@@ -549,6 +550,7 @@ namespace cba
 
         public ErrorTrace mapBackTrace(ErrorTrace trace)
         {
+            if (trace == null) return null;
             if (!dict.ContainsKey(trace.procName))
             {
                 // missing transformations are assumed to be identity
@@ -712,7 +714,9 @@ namespace cba
 
                     // Is there a corresponding source instruction?
                     if (!toFromMap.ContainsKey(to))
+                    {
                         continue;
+                    }
 
                     // This is the location of the corresponding source instruction
                     var from = toFromMap[to];

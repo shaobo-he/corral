@@ -358,6 +358,10 @@ namespace cba.Util
             return base.VisitBlockSeq(new List<Block>(blockSeq));
         }
 
+        public override IList<Block> VisitBlockList(IList<Block> blocks)
+        {
+            return base.VisitBlockList(new List<Block>(blocks));
+        }
 
         public override List<Declaration> VisitDeclarationList(List<Declaration> decls)
         {

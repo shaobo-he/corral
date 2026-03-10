@@ -4240,6 +4240,11 @@ namespace CoreLib
                                 callSitesToExpand = new List<StratifiedCallSite>();
 
                             callSitesToExpand.Add(scs);
+                            // In SIBoolControlVC mode, passified blocks have no CallCmd, so
+                            // record non-inlined call sites in calleeCounterexamples too,
+                            // allowing constructErrorTrace to identify them as calls.
+                            calleeCounterexamples[new TraceLocation(trace.Count - 1, scs.callSite.numInstr)] =
+                                new CalleeCounterexampleInfo(null, new List<object>());
                         }
                         else
                         {
