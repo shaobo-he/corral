@@ -195,19 +195,21 @@ namespace cba
 
             foreach (var impl in BoogieUtil.GetImplementations(p))
             {
-                impl.PruneUnreachableBlocks();
+                impl.PruneUnreachableBlocks(BoogieUtil.BoogieOptions);
             }
 
             // save RB
-            var rb = CommandLineOptions.Clo.RecursionBound;
+            var rb = BoogieUtil.RecursionBound;
             if (BoogieVerify.irreducibleLoopUnroll >= 0)
-                CommandLineOptions.Clo.RecursionBound = BoogieVerify.irreducibleLoopUnroll;
+                BoogieUtil.RecursionBound = BoogieVerify.irreducibleLoopUnroll;
 
             var procsWithIrreducibleLoops = new HashSet<string>();
-            var passInfo = p.ExtractLoops(out procsWithIrreducibleLoops);
+            var passInfo = LoopExtractor.ExtractLoops(BoogieUtil.BoogieOptions, p);
+            p.Resolve(BoogieUtil.BoogieOptions);
+            p.Typecheck(BoogieUtil.BoogieOptions);
 
             // restore RB
-            CommandLineOptions.Clo.RecursionBound = rb;
+            BoogieUtil.RecursionBound = rb;
 
             // no loops found, then this transformation is identity
             if (passInfo.Count == 0 && procsWithIrreducibleLoops.Count == 0)
@@ -300,7 +302,7 @@ namespace cba
                 var gc = blk.TransferCmd as GotoCmd;
                 if (gc == null) continue;
                 var ss = new List<String>();
-                foreach (var t in gc.labelNames)
+                foreach (var t in gc.LabelNames)
                 {
                     if (afBlocks.Contains(t)) continue;
                     ss.Add(t);

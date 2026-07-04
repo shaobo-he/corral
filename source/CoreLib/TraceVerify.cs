@@ -121,7 +121,7 @@ namespace cba
 
             output.AddTopLevelDeclaration(
                 new Procedure(Token.NoToken, newName, proc.TypeParameters, proc.InParams,
-                    proc.OutParams, proc.Requires, proc.Modifies, proc.Ensures,
+                    proc.OutParams, proc.IsPure, proc.Requires, proc.Preserves, proc.Ensures, proc.Modifies,
                     proc.Attributes));
 
             // Now to peice together the commands from the implementation. We keep around
@@ -141,17 +141,18 @@ namespace cba
             {
                 Block curr = labelToBlock[trace.Blocks[i].blockName];
 
-                Block traceBlock = new Block();
-                traceBlock.Cmds = new List<Cmd>();
-                traceBlock.Label = addIntToString(trace.Blocks[i].blockName, i); // (The "i" is to deal with loops)
+                var traceCmds = new List<Cmd>();
+                var traceLabel = addIntToString(trace.Blocks[i].blockName, i); // (The "i" is to deal with loops)
+                TransferCmd traceTransfer;
                 if (i != n - 1)
                 {
-                    traceBlock.TransferCmd = BoogieAstFactory.MkGotoCmd(addIntToString(trace.Blocks[i + 1].blockName, i + 1));
+                    traceTransfer = BoogieAstFactory.MkGotoCmd(addIntToString(trace.Blocks[i + 1].blockName, i + 1));
                 }
                 else
                 {
-                    traceBlock.TransferCmd = new ReturnCmd(Token.NoToken);
+                    traceTransfer = new ReturnCmd(Token.NoToken);
                 }
+                Block traceBlock = new Block(Token.NoToken, traceLabel, traceCmds, traceTransfer);
                 tinfo.addTrans(newName, trace.Blocks[i].blockName, traceBlock.Label);
 
                 #region Check consistency
@@ -167,7 +168,7 @@ namespace cba
                 }
                 else if (curr.TransferCmd is GotoCmd)
                 {
-                    List<String> targets = (curr.TransferCmd as GotoCmd).labelNames;
+                    List<String> targets = (curr.TransferCmd as GotoCmd).LabelNames;
                     // one of these targets should be the next label
                     if (i != n - 1)
                     {
@@ -371,7 +372,7 @@ namespace cba
                 if (node.TransferCmd is GotoCmd)
                 {
                     var gc = node.TransferCmd as GotoCmd;
-                    foreach (string s in gc.labelNames)
+                    foreach (string s in gc.LabelNames)
                     {
                         stack.Add(labelBlockMap[s]);
                     }
@@ -443,7 +444,8 @@ namespace cba
             foreach (var p in newProcsToAdd)
             {
                 var proc = new Procedure(Token.NoToken, p, new List<TypeVariable>(),
-                    new List<Variable>(), new List<Variable>(), new List<Requires>(), new List<IdentifierExpr>(), new List<Ensures>());
+                    new List<Variable>(), new List<Variable>(), false, new List<Requires>(), new List<Requires>(),
+                    new List<Ensures>(), new List<IdentifierExpr>());
                 output.AddTopLevelDeclaration(proc);
             }
 

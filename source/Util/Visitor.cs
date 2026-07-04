@@ -345,7 +345,7 @@ namespace cba.Util
                 node = this.VisitDeclWithFormals((DeclWithFormals)node);
             else
             {
-                node.Emit(new TokenTextWriter(Console.Out), 0);
+                node.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                 throw new InvalidInput("Unknown declaration type");
             }
 
@@ -366,7 +366,7 @@ namespace cba.Util
                 node = this.VisitProcedure((Procedure)node);
             else
             {
-                node.Emit(new TokenTextWriter(Console.Out), 0);
+                node.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                 throw new InvalidInput("Unknown declaration type");
             }
 
@@ -531,7 +531,7 @@ namespace cba.Util
                 node = this.VisitDeclWithFormals((DeclWithFormals)node);
             else
             {
-                node.Emit(new TokenTextWriter(Console.Out), 0);
+                node.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                 throw new InvalidInput("Unknown declaration type");
             }
 
@@ -661,7 +661,7 @@ namespace cba.Util
         public override BinderExpr VisitBinderExpr(BinderExpr node)
         {
             add(node);
-            return base.VisitBinderExpr(node);
+            return (BinderExpr)base.VisitBinderExpr(node);
         }
 
         public override Block VisitBlock(Block node)
@@ -805,7 +805,7 @@ namespace cba.Util
         public override MapType VisitMapType(MapType node)
         {
             add(node);
-            return base.VisitMapType(node);
+            return (MapType)base.VisitMapType(node);
         }
 
         public override Expr VisitNAryExpr(NAryExpr node)

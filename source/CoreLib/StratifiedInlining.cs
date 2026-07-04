@@ -1,13 +1,16 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Boogie;
 using Microsoft.Boogie.VCExprAST;
 using VC;
-using Outcome = VC.VCGen.Outcome;
+using Outcome = VC.VcOutcome;
 using cba.Util;
 using Microsoft.Boogie.GraphUtil;
 
@@ -64,7 +67,7 @@ namespace CoreLib
     ****************************************/
 
     /* stratified inlining technique */
-    public class StratifiedInlining : StratifiedVCGenBase
+    public class StratifiedInlining : StratifiedVerificationConditionGeneratorBase
     {
         public static readonly string ForceInlineAttr = "ForceInline";
         public static int StratifiedInliningVerbose = 0;
@@ -106,7 +109,7 @@ namespace CoreLib
         }
 
         public StratifiedInlining(Program program, string logFilePath, bool appendLogFile, Action<Implementation> PassiveImplInstrumentation) :
-            base(program, logFilePath, appendLogFile, new List<Checker>(), PassiveImplInstrumentation)
+            base(TextWriter.Null, BoogieUtil.BoogieOptions, program, logFilePath, appendLogFile, new CheckerPool(BoogieUtil.BoogieOptions), PassiveImplInstrumentation)
         {
             stats = new Stats();
 
@@ -192,9 +195,9 @@ namespace CoreLib
             while (true)
             {
                 // Check timeout
-                if (CommandLineOptions.Clo.TimeLimit != 0)
+                if (BoogieUtil.BoogieOptions.TimeLimit != 0)
                 {
-                    if ((DateTime.UtcNow - startTime).TotalSeconds > CommandLineOptions.Clo.TimeLimit)
+                    if ((DateTime.UtcNow - startTime).TotalSeconds > BoogieUtil.BoogieOptions.TimeLimit)
                     {
                         return Outcome.TimedOut;
                     }
@@ -245,7 +248,7 @@ namespace CoreLib
                 if (outcome != Outcome.Errors)
                 {
                     if (boundHit && outcome == Outcome.Correct)
-                        outcome = Outcome.ReachedBound;
+                        outcome = Outcome.Inconclusive;
 
                     break; // done
                 }
@@ -294,9 +297,11 @@ namespace CoreLib
         }
 
         /* verification */
-        public override Outcome VerifyImplementation(Implementation impl, VerifierCallback callback)
+        public override async Task<Outcome> VerifyImplementation(ImplementationRun run, VerifierCallback callback, CancellationToken cancellationToken)
         {
+            var impl = run.Implementation;
             startTime = DateTime.UtcNow;
+            await Task.CompletedTask;
 
             procsHitRecBound = new HashSet<string>();
 
@@ -328,7 +333,7 @@ namespace CoreLib
                 var nextOpenCallSites = new HashSet<StratifiedCallSite>();
                 foreach (StratifiedCallSite scs in openCallSites)
                 {
-                    if (HasExceededRecursionDepth(scs, CommandLineOptions.Clo.RecursionBound)) continue;
+                    if (HasExceededRecursionDepth(scs, BoogieUtil.RecursionBound)) continue;
 
                     var ss = Expand(scs);
                     if (ss != null) nextOpenCallSites.UnionWith(ss.CallSites);
@@ -368,12 +373,12 @@ namespace CoreLib
 
                 outcome = Fwd(openCallSites, reporter, true, currRecursionBound);
 
-                // timeout?
-                if (outcome == Outcome.Inconclusive || outcome == Outcome.OutOfMemory || outcome == Outcome.TimedOut)
+                // timeout or OOM?
+                if (outcome == Outcome.OutOfMemory || outcome == Outcome.TimedOut)
                     break;
 
-                // reached bound?
-                if (outcome == Outcome.ReachedBound && currRecursionBound < CommandLineOptions.Clo.RecursionBound)
+                // Boogie 3.5.6 represents bound exhaustion as Inconclusive.
+                if (outcome == Outcome.Inconclusive && procsHitRecBound.Count > 0 && currRecursionBound < BoogieUtil.RecursionBound)
                 {
                     if (StratifiedInliningVerbose > 0)
                         Console.WriteLine("SI: Exhausted recursion bound of {0}", currRecursionBound);
@@ -381,8 +386,11 @@ namespace CoreLib
                     continue;
                 }
 
-                // outcome is either ReachedBound with currRecBound == Max or
-                // Errors or Correct
+                if (outcome == Outcome.Inconclusive)
+                    break;
+
+                // outcome is either bound-hit Inconclusive with currRecBound == Max,
+                // true Inconclusive, Errors, or Correct.
                 break;
             }
 
@@ -430,7 +438,7 @@ namespace CoreLib
                 toassert = prover.VCExprGen.Implies(scs.callSiteExpr, prover.VCExprGen.And(
                 svc.vcexpr, AttachByEquality(scs, svc)));
 
-            prover.LogComment("Inlining " + scs.callSite.calleeName + " from " + (parent.ContainsKey(scs) ? attachedVC[parent[scs]].info.impl.Name : "main"));
+            prover.LogComment("Inlining " + scs.callSite.calleeName + " from " + (parent.ContainsKey(scs) ? attachedVC[parent[scs]].info.Implementation.Name : "main"));
 
             stats.vcSize += SizeComputingVisitor.ComputeSize(toassert);
 
@@ -469,7 +477,7 @@ namespace CoreLib
                 var scs = attachedVCInv[vc];
                 ret = GetPersistentID(scs);
             }
-            return string.Format("{0}_262_{1}", ret, vc.info.impl.Name);
+            return string.Format("{0}_262_{1}", ret, vc.info.Implementation.Name);
         }
 
         // 'Attach' inlined from Boogie/StratifiedVC.cs (and made static)
@@ -500,10 +508,9 @@ namespace CoreLib
         {
             stats.calls++;
             var stopwatch = Stopwatch.StartNew();
-            prover.Check();
+            var (solverOutcome, _) = prover.CheckAssumptions(new List<VCExpr>(), reporter, CancellationToken.None).GetAwaiter().GetResult();
             stats.time += stopwatch.ElapsedTicks;
-            ProverInterface.Outcome outcome = prover.CheckOutcomeCore(reporter);
-            return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(outcome);
+            return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
         }
 
         public override Outcome FindLeastToVerify(Implementation impl, ref HashSet<string> allBoolVars)
@@ -675,7 +682,8 @@ namespace CoreLib
 
     public class EmptyErrorReporter : ProverInterface.ErrorHandler
     {
-        public override void OnModel(IList<string> labels, Model model, ProverInterface.Outcome proverOutcome) { }
+        public EmptyErrorReporter() : base(BoogieUtil.BoogieOptions) { }
+        public override void OnModel(IList<string> labels, Model model, SolverOutcome proverOutcome) { }
     }
 
     public class InsufficientDetailsToConstructCexPath : Exception
@@ -698,6 +706,7 @@ namespace CoreLib
         List<Tuple<int, int>> orderedStateIds;
 
         public StratifiedInliningErrorReporter(VerifierCallback callback, StratifiedInlining si, StratifiedVC mainVC)
+            : base(BoogieUtil.BoogieOptions)
         {
             this.callback = callback;
             this.si = si;
@@ -713,9 +722,7 @@ namespace CoreLib
 
         private Absy Label2Absy(string procName, string label)
         {
-            int id = int.Parse(label);
-            var l2a = si.implName2StratifiedInliningInfo[procName].label2absy;
-            return (Absy)l2a[id];
+            throw new NotImplementedException("Label-based trace reconstruction is not supported with Boogie 3.5.6. Use SIBoolControlVC mode.");
         }
 
         public override void OnProverError(string message)
@@ -738,10 +745,10 @@ namespace CoreLib
             System.Threading.Tasks.Task.WaitAll(t1, t2);
         }
 
-        public override void OnModel(IList<string> labels, Model model, ProverInterface.Outcome proverOutcome)
+        public override void OnModel(IList<string> labels, Model model, SolverOutcome proverOutcome)
         {
             // Timeout?
-            if (proverOutcome != ProverInterface.Outcome.Invalid)
+            if (proverOutcome != SolverOutcome.Invalid)
                 return;
 
             var start = DateTime.Now;
@@ -766,7 +773,7 @@ namespace CoreLib
         // returns a list of blocks followed by a fake assert
         private List<Absy> GetAbsyTrace(StratifiedVC svc, IList<string> labels)
         {
-            if (CommandLineOptions.Clo.SIBoolControlVC)
+            if (BoogieUtil.BoogieOptions.SIBoolControlVC)
                 return GetAbsyTraceBoolControlVC(svc);
             else
                 return GetAbsyTraceControlFlowVariable(svc, labels);
@@ -774,24 +781,20 @@ namespace CoreLib
 
         private List<Absy> GetAbsyTraceControlFlowVariable(StratifiedVC svc, IList<string> labels)
         {
-            if (labels == null)
-            {
-                labels = si.prover.CalculatePath(svc.id);
-            }
             var ret = new List<Absy>();
             foreach (var label in labels)
             {
-                ret.Add(Label2Absy(svc.info.impl.Name, label));
+                ret.Add(Label2Absy(svc.info.Implementation.Name, label));
             }
             return ret;
         }
 
         private List<Absy> GetAbsyTraceBoolControlVC(StratifiedVC svc)
         {
-            Debug.Assert(CommandLineOptions.Clo.UseProverEvaluate, "Must use prover evaluate option with boolControlVC");
+            Debug.Assert(BoogieUtil.BoogieOptions.UseProverEvaluate, "Must use prover evaluate option with boolControlVC");
 
             var ret = new List<Absy>();
-            var impl = svc.info.impl;
+            var impl = svc.info.Implementation;
             var block = impl.Blocks[0];
 
             while (true)
@@ -800,9 +803,9 @@ namespace CoreLib
                 var gc = block.TransferCmd as GotoCmd;
                 if (gc == null) break;
                 Block next = null;
-                foreach (var succ in gc.labelTargets)
+                foreach (var succ in gc.LabelTargets)
                 {
-                    var succtaken = (bool)svc.info.vcgen.prover.Evaluate(svc.blockToControlVar[succ]);
+                    var succtaken = (bool)svc.info.vcgen.prover.Evaluate(svc.blockToControlVar[succ]).GetAwaiter().GetResult();
                     if (succtaken)
                     {
                         next = succ;
@@ -850,16 +853,16 @@ namespace CoreLib
                         }
                     }
                 }
-                if (svc.recordProcCallSites.ContainsKey(b) && (model != null || CommandLineOptions.Clo.UseProverEvaluate))
+                if (svc.recordProcCallSites.ContainsKey(b) && (model != null || BoogieUtil.BoogieOptions.UseProverEvaluate))
                 {
                     foreach (StratifiedCallSite scs in svc.recordProcCallSites[b])
                     {
                         var args = new List<object>();
                         foreach (VCExpr expr in scs.interfaceExprs)
                         {
-                            if (model == null && CommandLineOptions.Clo.UseProverEvaluate)
+                            if (model == null && BoogieUtil.BoogieOptions.UseProverEvaluate)
                             {
-                                args.Add(svc.info.vcgen.prover.Evaluate(expr));
+                                args.Add(svc.info.vcgen.prover.Evaluate(expr).GetAwaiter().GetResult());
                             }
                             else
                             {
@@ -907,7 +910,7 @@ namespace CoreLib
             }
 
             Block lastBlock = (Block)absyList[absyList.Count - 2];
-            Counterexample newCounterexample = VC.VCGen.AssertCmdToCounterexample(assertCmd, lastBlock.TransferCmd, trace, null, model, svc.info.mvInfo, si.prover.Context);
+            Counterexample newCounterexample = VC.VerificationConditionGenerator.AssertCmdToCounterexample(BoogieUtil.BoogieOptions, assertCmd, lastBlock.TransferCmd, trace, null, model, svc.info.mvInfo, si.prover.Context, null);
             newCounterexample.AddCalleeCounterexample(calleeCounterexamples);
             return newCounterexample;
         }

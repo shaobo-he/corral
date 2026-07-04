@@ -25,7 +25,7 @@ namespace cba
 
         public override Procedure VisitProcedure(Procedure node)
         {
-            if (QKeyValue.FindBoolAttribute(node.Attributes, "entrypoint"))
+            if (QKeyValue.FindAttribute(node.Attributes, attr => attr.Key == "entrypoint") != null)
                 entrypoints.Add(node.Name);
             return base.VisitProcedure(node);
         }

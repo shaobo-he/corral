@@ -129,7 +129,7 @@ namespace cba
             BoogieVerify.options.Set();
 
             // An important pass for recording the value of int variables
-            Debug.Assert(CommandLineOptions.Clo.StratifiedInlining > 0);
+            Debug.Assert(BoogieUtil.BoogieOptions.StratifiedInlining > 0);
             if (WillGetModel)
                 recordVarsTransformation(p, p.mainProcName);
 
@@ -188,8 +188,8 @@ namespace cba
                 var inv = new List<Variable>();
                 inv.Add(new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "x", Microsoft.Boogie.Type.Int), true));
 
-                intDecl = new Procedure(Token.NoToken, recordIntArgProc, new List<TypeVariable>(), inv, new List<Variable>(), new List<Requires>(),
-                    new List<IdentifierExpr>(), new List<Ensures>());
+                intDecl = new Procedure(Token.NoToken, recordIntArgProc, new List<TypeVariable>(), inv, new List<Variable>(), false,
+                    new List<Requires>(), new List<Requires>(), new List<Ensures>(), new List<IdentifierExpr>());
 
                 program.AddTopLevelDeclaration(intDecl);
             }
@@ -200,8 +200,8 @@ namespace cba
                 var inv = new List<Variable>();
                 inv.Add(new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "x", Microsoft.Boogie.Type.Bool), true));
 
-                boolDecl = new Procedure(Token.NoToken, recordBoolArgProc, new List<TypeVariable>(), inv, new List<Variable>(), new List<Requires>(),
-                    new List<IdentifierExpr>(), new List<Ensures>());
+                boolDecl = new Procedure(Token.NoToken, recordBoolArgProc, new List<TypeVariable>(), inv, new List<Variable>(), false,
+                    new List<Requires>(), new List<Requires>(), new List<Ensures>(), new List<IdentifierExpr>());
 
                 program.AddTopLevelDeclaration(boolDecl);
             }
@@ -328,10 +328,10 @@ namespace cba
                     var loc = new TraceLocation(i, numInstr);
                     ErrorTraceInstr instr = null;
 
-                    if (btrace.calleeCounterexamples.ContainsKey(loc))
+                    if (btrace.CalleeCounterexamples.ContainsKey(loc))
                     {
                         ErrorTrace calleeTrace = constructErrorTrace(
-                             btrace.calleeCounterexamples[loc].counterexample, (c as CallCmd).Proc.Name, true, ref captureStateIndex);
+                             btrace.CalleeCounterexamples[loc].Counterexample, (c as CallCmd).Proc.Name, true, ref captureStateIndex);
                         var info = new InstrInfo();
                         var cc = c as CallCmd;
                         Debug.Assert(cc != null);
@@ -339,10 +339,10 @@ namespace cba
                         if (cc.Proc.Name == recordIntArgProc || cc.Proc.Name == recordBoolArgProc)
                         {
                             Debug.Assert(recordTransformationHappened);
-                            Debug.Assert(btrace.calleeCounterexamples[loc].args.Count == 1);
+                            Debug.Assert(btrace.CalleeCounterexamples[loc].Args.Count == 1);
                             Debug.Assert(cc.Ins[0] is IdentifierExpr);
 
-                            var modelVal = btrace.calleeCounterexamples[loc].args[0];
+                            var modelVal = btrace.CalleeCounterexamples[loc].Args[0];
                             object v = null;
                             if (cc.Proc.Name == recordIntArgProc && modelVal is Model.Integer)
                             {
@@ -378,10 +378,10 @@ namespace cba
                         }
                         if (cc.Proc.Name.StartsWith(recordArgProcPrefix))
                         {
-                            Debug.Assert(btrace.calleeCounterexamples[loc].args.Count == 1);
+                            Debug.Assert(btrace.CalleeCounterexamples[loc].Args.Count == 1);
                             //Debug.Assert(cc.Ins[0] is IdentifierExpr);
 
-                            var v = btrace.calleeCounterexamples[loc].args[0];
+                            var v = btrace.CalleeCounterexamples[loc].Args[0];
                             if (v != null)
                             {
                                 info.addVal("si_arg", v);
@@ -445,10 +445,10 @@ namespace cba
                 var c = lastBlk.Cmds[i];
                 var loc = new TraceLocation(btrace.Trace.Count - 1, i);
                 ErrorTraceInstr instr = null;
-                if (btrace.calleeCounterexamples.ContainsKey(loc))
+                if (btrace.CalleeCounterexamples.ContainsKey(loc))
                 {
                     var calleeTrace = constructErrorTrace(
-                        btrace.calleeCounterexamples[loc].counterexample, (c as CallCmd).Proc.Name, true, ref captureStateIndex);
+                        btrace.CalleeCounterexamples[loc].Counterexample, (c as CallCmd).Proc.Name, true, ref captureStateIndex);
                     var info = new InstrInfo();
 
                     var cc = c as CallCmd;
@@ -457,10 +457,10 @@ namespace cba
                     if (cc.Proc.Name == recordIntArgProc || cc.Proc.Name == recordBoolArgProc)
                     {
                         Debug.Assert(recordTransformationHappened);
-                        Debug.Assert(btrace.calleeCounterexamples[loc].args.Count == 1);
+                        Debug.Assert(btrace.CalleeCounterexamples[loc].Args.Count == 1);
                         Debug.Assert(cc.Ins[0] is IdentifierExpr);
 
-                        var modelVal = btrace.calleeCounterexamples[loc].args[0];
+                        var modelVal = btrace.CalleeCounterexamples[loc].Args[0];
                         object v = null;
                         if (cc.Proc.Name == recordIntArgProc && modelVal is Model.Integer)
                         {
@@ -496,10 +496,10 @@ namespace cba
                     }
                     else if (cc.Proc.Name.StartsWith(recordArgProcPrefix))
                     {
-                        Debug.Assert(btrace.calleeCounterexamples[loc].args.Count == 1);
+                        Debug.Assert(btrace.CalleeCounterexamples[loc].Args.Count == 1);
                         //Debug.Assert(cc.Ins[0] is IdentifierExpr);
 
-                        var v = btrace.calleeCounterexamples[loc].args[0];
+                        var v = btrace.CalleeCounterexamples[loc].Args[0];
                         if (v != null)
                         {
                             info.addVal("si_arg", v);

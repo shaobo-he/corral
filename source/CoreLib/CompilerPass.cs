@@ -126,11 +126,6 @@ namespace cba
                             if (ac == null) return c;
                             return new AssumeCmd(ac.tok, /*ac.Expr*/ Expr.True, ac.Attributes);
                         })));
-            // delete yield
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Iter(impl => impl.Blocks
-                    .Iter(blk => blk.Cmds.RemoveAll(c => c is YieldCmd)));
-
             // Call graph
             ComputeCallGraph(program);
 
@@ -178,8 +173,8 @@ namespace cba
             BoogieVerify.PrintImplsBeingVerified = true;
 
             // Set rec. bound
-            var oldBound = CommandLineOptions.Clo.RecursionBound;
-            CommandLineOptions.Clo.RecursionBound = maxBound;
+            var oldBound = BoogieUtil.RecursionBound;
+            BoogieUtil.RecursionBound = maxBound;
 
             // Query
             var allErrors = new List<BoogieErrorTrace>();
@@ -193,7 +188,7 @@ namespace cba
                 Console.WriteLine("LB: Loop {0} requires minimum {1} iterations", loopName, bound);
             }
 
-            CommandLineOptions.Clo.RecursionBound = oldBound;
+            BoogieUtil.RecursionBound = oldBound;
             BoogieVerify.PrintImplsBeingVerified = false;
             timeTaken = (DateTime.Now - start);
 
@@ -230,10 +225,10 @@ namespace cba
                 {
                     Cmd c = b.Cmds[numInstr];
                     var loc = new TraceLocation(numBlock, numInstr);
-                    if (trace.calleeCounterexamples.ContainsKey(loc))
+                    if (trace.CalleeCounterexamples.ContainsKey(loc))
                     {
                         ret +=
-                            RecBound(recFunc, trace.calleeCounterexamples[loc].counterexample,
+                            RecBound(recFunc, trace.CalleeCounterexamples[loc].Counterexample,
                             (c as CallCmd).Proc.Name);
                     }
                 }
@@ -450,7 +445,7 @@ namespace cba
                 .Iter(cc =>
                 {
                     var str = new System.IO.StringWriter();
-                    var tt = new TokenTextWriter(str);
+                    var tt = new TokenTextWriter(str, BoogieUtil.BoogieOptions);
                     cc.Emit(tt, 0);
                     tt.Close();
                     callStr.Add(str.ToString());
@@ -486,8 +481,8 @@ namespace cba
             rBlocks.Iter(blk =>
             {
                 var gc = BoogieAstFactory.MkGotoCmd(nb.Label);
-                gc.labelTargets = new List<Block>();
-                gc.labelTargets.Add(nb);
+                gc.LabelTargets = new List<Block>();
+                gc.LabelTargets.Add(nb);
                 blk.TransferCmd = gc;
             });
             impl.Blocks.Add(nb);
@@ -538,9 +533,9 @@ namespace cba
             // Type information is needed in some cases. For instance, the Command
             // Mem[x] := untracked-expr is converted to havoc temp; Mem[x] := temp. Here
             // we need the type of "untracked-expr" or of "Mem[x]"
-            if (p.Typecheck() != 0)
+            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
             {
-                p.Emit(new TokenTextWriter("error.bpl"));
+                p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
                 throw new InternalError("Type errors");
             }
             vslice.VisitProgram(p as Program);

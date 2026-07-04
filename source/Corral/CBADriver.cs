@@ -229,14 +229,16 @@ namespace cba
             // Program
             progVerifyOptions = new BoogieVerifyOptions();
             progVerifyOptions.CallTree = new HashSet<string>();
-            progVerifyOptions.UseProverEvaluate = config.useProverEvaluate;
-            progVerifyOptions.StratifiedInliningWithoutModels = progVerifyOptions.UseProverEvaluate ? true : false;
+            progVerifyOptions.SIBoolControlVC = true;
+            progVerifyOptions.UseProverEvaluate = true;
+            progVerifyOptions.StratifiedInliningWithoutModels = true;
 
             // Path
             pathVerifyOptions = new BoogieVerifyOptions();
             pathVerifyOptions.StratifiedInlining = 100;
-            pathVerifyOptions.UseProverEvaluate = config.useProverEvaluate;
-            pathVerifyOptions.StratifiedInliningWithoutModels = pathVerifyOptions.UseProverEvaluate ? true : false;
+            pathVerifyOptions.SIBoolControlVC = true;
+            pathVerifyOptions.UseProverEvaluate = true;
+            pathVerifyOptions.StratifiedInliningWithoutModels = true;
             if (config.printData == 2)
             {
                 pathVerifyOptions.StratifiedInliningWithoutModels = false;
@@ -246,6 +248,7 @@ namespace cba
             // Refinement
             refinementVerifyOptions = pathVerifyOptions.Copy();
             refinementVerifyOptions.UseProverEvaluate = true;
+            refinementVerifyOptions.SIBoolControlVC = true;
             refinementVerifyOptions.StratifiedInliningWithoutModels = true;
             refinementVerifyOptions.ModelViewFile = null;
         }

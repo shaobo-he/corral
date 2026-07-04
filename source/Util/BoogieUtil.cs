@@ -10,9 +10,12 @@ namespace cba.Util
 {
     public class BoogieUtil
     {
+        public static CommandLineOptions BoogieOptions = null;
+        public static int RecursionBound = 1;
+
         public static bool InitializeBoogie(string clo)
         {
-            CommandLineOptions.Clo.RunningBoogieFromCommandLine = true;
+            BoogieOptions.RunningBoogieFromCommandLine = true;
 
             var quotes = (" " + clo + " ").Split(new char[] { '\"' }, StringSplitOptions.RemoveEmptyEntries);
             var args = new List<string>();
@@ -25,7 +28,7 @@ namespace cba.Util
                     args.Add(quotes[i]);
             }
 
-            if (!CommandLineOptions.Clo.Parse(args.ToArray()))
+            if (!BoogieOptions.Parse(args.ToArray()))
                 return true;
 
             return false;
@@ -33,19 +36,34 @@ namespace cba.Util
 
         public static void DoModSetAnalysis(Program p)
         {
-            (new ModSetCollector()).DoModSetAnalysis(p);
+            var procByName = p.TopLevelDeclarations.OfType<Procedure>()
+                .ToDictionary(proc => proc.Name);
+            foreach (var impl in p.TopLevelDeclarations.OfType<Implementation>())
+            {
+                foreach (var block in impl.Blocks)
+                {
+                    foreach (var cmd in block.Cmds.OfType<CallCmd>())
+                    {
+                        if (cmd.Proc == null && procByName.TryGetValue(cmd.callee, out var proc))
+                        {
+                            cmd.Proc = proc;
+                        }
+                    }
+                }
+            }
+            (new ModSetCollector(BoogieOptions)).CollectModifies(p);
         }
 
         public static void PrintProgram(Program p, string filename)
         {
-            var outFile = new TokenTextWriter(filename);
+            var outFile = new TokenTextWriter(filename, BoogieOptions);
             p.Emit(outFile);
             outFile.Close();
         }
 
         public static bool ResolveProgram(Program p, string filename)
         {
-            int errorCount = p.Resolve();
+            int errorCount = p.Resolve(BoogieOptions);
             if (errorCount != 0)
                 Console.WriteLine(errorCount + " name resolution errors in " + filename);
             return errorCount != 0;
@@ -53,7 +71,7 @@ namespace cba.Util
 
         public static bool TypecheckProgram(Program p, string filename)
         {
-            int errorCount = p.Typecheck();
+            int errorCount = p.Typecheck(BoogieOptions);
             if (errorCount != 0)
             {
                 PrintProgram(p, "error.bpl");
@@ -437,7 +455,7 @@ namespace cba.Util
             using (var writer = new System.IO.MemoryStream())
             {
                 var st = new System.IO.StreamWriter(writer);
-                var tt = new TokenTextWriter(st);
+                var tt = new TokenTextWriter(st, BoogieOptions);
                 p.Emit(tt);
                 writer.Flush();
                 st.Flush();
@@ -468,7 +486,7 @@ namespace cba.Util
 
         public static void PrintGlobalVariables(Program p)
         {
-            TokenTextWriter log = new TokenTextWriter(Console.Out);
+            TokenTextWriter log = new TokenTextWriter(Console.Out, BoogieOptions);
             foreach (Declaration d in p.TopLevelDeclarations)
             {
                 if (d is GlobalVariable)
@@ -1081,7 +1099,8 @@ namespace cba.Util
         {
             return new Procedure(
                 Token.NoToken, name, new List<TypeVariable>(), ins, outs,
-                new List<Requires>(), new List<IdentifierExpr>(), new List<Ensures>());
+                false, new List<Requires>(), new List<Requires>(), new List<Ensures>(),
+                new List<IdentifierExpr>());
         }
         public static Declaration MkProc(string name,
             IEnumerable<Variable> ins, IEnumerable<Variable> outs)
@@ -1266,12 +1285,11 @@ namespace cba.Util
          */
         public static Block CloneBlock(Block blk)
         {
-            Block result = new Block();
-            result.tok = CloneToken(blk.tok);
-            result.Label = blk.Label.Clone() as String;
-            result.TransferCmd = CloneTransferCmd(blk.TransferCmd);
-            result.Cmds = CloneCmdSeq(blk.Cmds);
-            return result;
+            return new Block(
+                CloneToken(blk.tok),
+                blk.Label.Clone() as string,
+                CloneCmdSeq(blk.Cmds),
+                CloneTransferCmd(blk.TransferCmd));
         }
 
         public static List<Cmd> CloneCmdSeq(List<Cmd> cmdseq)
@@ -1290,7 +1308,7 @@ namespace cba.Util
         }
         public static GotoCmd CloneGotoCmd(GotoCmd cmd)
         {
-            return new GotoCmd(CloneToken(cmd.tok), CloneStringSeq(cmd.labelNames));
+            return new GotoCmd(CloneToken(cmd.tok), CloneStringSeq(cmd.LabelNames));
         }
         public static ReturnCmd CloneReturnCmd(ReturnCmd cmd)
         {

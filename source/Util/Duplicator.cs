@@ -285,12 +285,12 @@ namespace cba.Util
                 if (g != null)
                 {
                     List<Block> targets = new List<Block>();
-                    foreach (Block t in g.labelTargets)
+                    foreach (Block t in g.LabelTargets)
                     {
                         Block nt = subst[t];
                         targets.Add(nt);
                     }
-                    g.labelTargets = targets;
+                    g.LabelTargets = targets;
                 }
             }
             return clone;
@@ -358,14 +358,9 @@ namespace cba.Util
             return base.VisitBlockSeq(new List<Block>(blockSeq));
         }
 
-        public override List<Block> VisitBlockList(List<Block> blocks)
+        public override IList<Block> VisitBlockList(IList<Block> blocks)
         {
-            var nblocks = new List<Block>();
-            for (int i = 0, n = blocks.Count; i < n; i++)
-            {
-                nblocks.Add(this.VisitBlock(blocks[i]));
-            }
-            return nblocks;
+            return base.VisitBlockList(new List<Block>(blocks));
         }
 
         public override List<Declaration> VisitDeclarationList(List<Declaration> decls)
@@ -419,7 +414,7 @@ namespace cba.Util
                 }
                 else
                 {
-                    node.Fun = nf.createUnresolvedCopy();
+                    node.Fun = nf.CreateUnresolvedCopy();
                 }
             }
             return node; // base.VisitNAryExpr(node);
@@ -438,8 +433,8 @@ namespace cba.Util
         public override GotoCmd VisitGotoCmd(GotoCmd node)
         {
             var gc = (GotoCmd)node.Clone();
-            gc.labelNames = new List<System.String>();
-            gc.labelNames.AddRange(node.labelNames);
+            gc.LabelNames = new List<System.String>();
+            gc.LabelNames.AddRange(node.LabelNames);
             return gc;
         }
 
@@ -454,7 +449,6 @@ namespace cba.Util
         {
             node = (Function)node.Clone();
             node.Attributes = CopyAttr(node.Attributes);
-            node.doingExpansion = false;
             return base.VisitFunction(node);
         }
 
@@ -520,7 +514,7 @@ namespace cba.Util
         }
         public override GotoCmd VisitGotoCmd(GotoCmd node)
         {
-            node.labelTargets = null;
+            node.LabelTargets = null;
             return node;
         }
     }

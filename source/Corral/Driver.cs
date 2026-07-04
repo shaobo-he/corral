@@ -85,14 +85,15 @@ namespace cba
             string boogieOptions = "";
             boogieOptions += config.boogieOpts;
 
-            boogieOptions += "/extractLoops /errorLimit:1 ";
-
-            boogieOptions += string.Format("/recursionBound:{0} ", config.recursionBound);
+            boogieOptions += "/errorLimit:1 ";
+            BoogieUtil.RecursionBound = config.recursionBound;
 
             // Initialize Boogie
-            CommandLineOptions.Clo.PrintInstrumented = true;
-            CommandLineOptions.Clo.ProcedureInlining = CommandLineOptions.Inlining.Assume;
-            CommandLineOptions.Clo.TypeEncodingMethod = CommandLineOptions.TypeEncoding.Monomorphic;
+            BoogieUtil.BoogieOptions.PrintInstrumented = true;
+            BoogieUtil.BoogieOptions.ProcedureInlining = CoreOptions.Inlining.Assume;
+            BoogieUtil.BoogieOptions.TypeEncodingMethod = CoreOptions.TypeEncoding.Monomorphic;
+            BoogieUtil.BoogieOptions.EnableUnSatCoreExtract = 1;
+            BoogieUtil.BoogieOptions.UseProverEvaluate = true;
 
             // /noRemoveEmptyBlocks is needed for field refinement. It ensures that
             // we get an actual path in the program (so that we can concretize it)
@@ -104,19 +105,16 @@ namespace cba
             VariableSlicing.UseSimpleSlicing = false;
             InstrumentationConfig.raiseExceptionBeforeAllProcedures = false;
 
-            if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.STRONG)
-                boogieOptions += " /useArrayTheory";
-            else if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK)
+            if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK)
             {
-                boogieOptions += " /useArrayTheory";
                 boogieOptions += " /proverOpt:O:smt.array.extensional=false";
             }
 
             if (BoogieUtil.InitializeBoogie(boogieOptions))
                 throw new InternalError("Cannot initialize Boogie");
 
-            if (CommandLineOptions.Clo.UseProverEvaluate)
-                CommandLineOptions.Clo.StratifiedInliningWithoutModels = true;
+            if (BoogieUtil.BoogieOptions.UseProverEvaluate)
+                BoogieUtil.BoogieOptions.StratifiedInliningWithoutModels = true;
 
             GlobalConfig.corralStartTime = DateTime.Now;
         }
@@ -130,7 +128,7 @@ namespace cba
             Console.WriteLine("Corral program verifier version {0}", VersionInfo());
 
             Configs config = Configs.parseCommandLine(args);
-            CommandLineOptions.Install(new CommandLineOptions());
+            BoogieUtil.BoogieOptions = new CommandLineOptions(Console.Out, new ConsolePrinter());
 
             if (!System.IO.File.Exists(config.inputFile))
             {
@@ -156,7 +154,7 @@ namespace cba
                 // abstract away globals (except for thread_locals)
                 var thread_locals = new HashSet<string>(inputProg.getProgram()
                     .TopLevelDeclarations.OfType<GlobalVariable>()
-                    .Where(gv => QKeyValue.FindBoolAttribute(gv.Attributes, LanguageSemantics.ThreadLocalAttr))
+                    .Where(gv => QKeyValue.FindAttribute(gv.Attributes, attr => attr.Key == LanguageSemantics.ThreadLocalAttr) != null)
                     .Select(gv => gv.Name));
                 var abs = new VariableSlicePass(VarSet.ToVarSet(thread_locals, inputProg.getProgram()));
 
@@ -324,7 +322,7 @@ namespace cba
             var prog = program.getCBAProgram();
 
             // walk the trace and program in lock step -- find the failing assertion
-            var location = ErrorTrace.FindCmd(prog, trace, c => (c is AssumeCmd) && QKeyValue.FindBoolAttribute((c as AssumeCmd).Attributes, RewriteAsserts.AssertIdentificationAttribute));
+            var location = ErrorTrace.FindCmd(prog, trace, c => (c is AssumeCmd) && QKeyValue.FindAttribute((c as AssumeCmd).Attributes, attr => attr.Key == RewriteAsserts.AssertIdentificationAttribute) != null);
             Debug.Assert(location != null);
 
             // Disable assert
@@ -402,13 +400,11 @@ namespace cba
             BoogieUtil.DoModSetAnalysis(init);
 
             // Now we can typecheck
-            CommandLineOptions.Clo.DoModSetAnalysis = true;
             if (BoogieUtil.TypecheckProgram(init, config.inputFile))
             {
                 BoogieUtil.PrintProgram(init, "error.bpl");
                 throw new InvalidProg("Cannot typecheck " + config.inputFile);
             }
-            CommandLineOptions.Clo.DoModSetAnalysis = false;
 
             // Gather the set of initially tracked variables
             initialTrackedVars = getTrackedVars(init, config);
@@ -437,7 +433,7 @@ namespace cba
             }
             foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
             {
-                if (CommandLineOptions.Clo.UserWantsToCheckRoutine(impl.Name) && !impl.SkipVerification)
+                if (!impl.IsSkipVerification(BoogieUtil.BoogieOptions))
                 {
                     CodeExprInliner.ProcessImplementation(program, impl);
                 }
@@ -455,7 +451,7 @@ namespace cba
             Dictionary<Declaration, QKeyValue> declToAnnotations;
 
             public CodeExprInliner(Program program)
-                : base(program, null, -1)
+                : base(program, null, -1, BoogieUtil.BoogieOptions)
             {
                 this.declToAnnotations = new Dictionary<Declaration, QKeyValue>();
                 // save annotation
@@ -466,10 +462,15 @@ namespace cba
                 }
             }
 
+            public void RunProcessImplementation(Program program, Implementation impl)
+            {
+                base.ProcessImplementation(program, impl);
+            }
+
             new public static void ProcessImplementation(Program program, Implementation impl)
             {
                 var ce = new CodeExprInliner(program);
-                ProcessImplementation(program, impl, ce);
+                ce.RunProcessImplementation(program, impl);
                 ce.RestoreAnnotations();
             }
 

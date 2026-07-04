@@ -44,6 +44,19 @@ namespace cba.Util
             if (!map.ContainsKey(key)) map.Add(key, new HashSet<V>());
             map[key].Add(value);
         }
+
+        public static void Iter<T>(this IEnumerable<T> enumerable, Action<T> action)
+        {
+            foreach (var item in enumerable)
+            {
+                action(item);
+            }
+        }
+
+        public static List<T> Filter<T>(this IEnumerable<T> enumerable, Func<T, bool> predicate)
+        {
+            return enumerable.Where(predicate).ToList();
+        }
     }
 
     public class Utils
@@ -120,7 +133,7 @@ namespace cba.Util
 
             if (debugOut == null)
             {
-                debugOut = new TokenTextWriter("corraldebug.out");
+                debugOut = new TokenTextWriter("corraldebug.out", BoogieUtil.BoogieOptions);
             }
         }
 
@@ -141,7 +154,7 @@ namespace cba.Util
                 init();
                 return debugOut;
             }
-            return new TokenTextWriter(Console.Out);
+            return new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions);
         }
 
         public static bool Write(int level, string msg, params object[] args)

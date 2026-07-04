@@ -13,7 +13,7 @@ namespace cba
     // is b2 and the only predecessor of b2 is b1, then merge the blocks into a single
     // block.
     // Note: one needs to re-resolve a program after this transformation. The
-    // reason is that Block.labelTargets needs to be recomputed
+    // reason is that Block.LabelTargets needs to be recomputed
     public class CompressBlocks
     {
         Dictionary<string, Block> locationBlockMap;
@@ -57,7 +57,7 @@ namespace cba
 
         public void VisitImplementation(Implementation node)
         {
-            List<Block> blocks = node.Blocks;
+            List<Block> blocks = new List<Block>(node.Blocks);
 
             clear();
             tinfo.Add(node.Name, new MergingInfo());
@@ -72,7 +72,7 @@ namespace cba
                 if (b.TransferCmd is GotoCmd)
                 {
                     var gt = b.TransferCmd as GotoCmd;
-                    foreach (string lab in gt.labelNames)
+                    foreach (string lab in gt.LabelNames)
                     {
                         addEdges(b.Label, lab);
                     }

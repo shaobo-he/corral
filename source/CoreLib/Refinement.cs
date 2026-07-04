@@ -228,9 +228,9 @@ namespace cba
 
             var p = upperProg.getCBAProgram();
 
-            if (p.Typecheck() != 0)
+            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
             {
-                p.Emit(new TokenTextWriter("error.bpl"));
+                p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
                 throw new InternalError("Type errors");
             }
             //BoogieUtil.PrintProgram(p, "RefineUp.bpl");
@@ -246,7 +246,7 @@ namespace cba
             //faProg.writeToFile("error.bpl");
             faProgProg = faProg.getProgram();
 
-            var t = faProgProg.Typecheck();
+            var t = faProgProg.Typecheck(BoogieUtil.BoogieOptions);
             Debug.Assert(t == 0);
 
             //BoogieUtil.PrintProgram(faProgProg, "refine.bpl");
@@ -305,9 +305,9 @@ namespace cba
             var upperProg = vp1.run(program);
 
             var p = upperProg.getCBAProgram();
-            if (p.Typecheck() != 0)
+            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
             {
-                p.Emit(new TokenTextWriter("error.bpl"));
+                p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
                 throw new InternalError("Type errors");
             }
 
@@ -319,7 +319,7 @@ namespace cba
 
             var faProgProg = faProg.getProgram();
 
-            var t = faProgProg.Typecheck();
+            var t = faProgProg.Typecheck(BoogieUtil.BoogieOptions);
             Debug.Assert(t == 0);
 
             boolVars = BoogieVerify.FindLeastToVerify(faProgProg, boolVars);
@@ -747,12 +747,12 @@ namespace cba
                 var gc = blk.TransferCmd as GotoCmd;
                 var ss = new List<String>();
 
-                gc.labelNames
+                gc.LabelNames
                     .OfType<string>()
                     .Where(l => !toPrune.Contains(l))
                     .Iter(l => ss.Add(l));
 
-                gc.labelNames = ss;
+                gc.LabelNames = ss;
             }
 
 
@@ -813,8 +813,8 @@ namespace cba
 
             // Create new main procedure
             var newMainProc = new Procedure(Token.NoToken, "fakeMain", oldMainProc.TypeParameters,
-                oldMainProc.InParams, oldMainProc.OutParams, oldMainProc.Requires,
-                oldMainProc.Modifies, oldMainProc.Ensures);
+                oldMainProc.InParams, oldMainProc.OutParams, oldMainProc.IsPure, oldMainProc.Requires,
+                oldMainProc.Preserves, oldMainProc.Ensures, oldMainProc.Modifies);
 
             var newMainImpl = new Implementation(Token.NoToken, "fakeMain", oldMainImpl.TypeParameters,
                 oldMainImpl.InParams, oldMainImpl.OutParams, new List<Variable>(), new List<Block>());

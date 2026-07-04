@@ -7,6 +7,7 @@ using Microsoft.Boogie;
 //using BoogiePL;
 using System.Diagnostics.Contracts;
 using System.IO;
+using System.Threading;
 using VC;
 using cba.Util;
 
@@ -42,10 +43,10 @@ namespace cba.Util
 
         public static void setTimeOut(uint TO)
         {
-            CommandLineOptions.Clo.TimeLimit = 0;
+            BoogieUtil.BoogieOptions.TimeLimit = 0;
             if (TO > 0)
             {
-                CommandLineOptions.Clo.TimeLimit = TO;
+                BoogieUtil.BoogieOptions.TimeLimit = TO;
             }
         }
 
@@ -110,22 +111,68 @@ namespace cba.Util
             // Set options
             options.Set();
 
-            // save RB
-            var rb = CommandLineOptions.Clo.RecursionBound;
-            if (BoogieVerify.irreducibleLoopUnroll >= 0)
-                CommandLineOptions.Clo.RecursionBound = BoogieVerify.irreducibleLoopUnroll;
+            // Extract loops into recursive procedures before VCGen. With
+            // SIBoolControlVC, passification assumes an acyclic block graph.
+            var extractionInfo = LoopExtractor.ExtractLoops(BoogieUtil.BoogieOptions, program);
+            program.Resolve(BoogieUtil.BoogieOptions);
+            program.Typecheck(BoogieUtil.BoogieOptions);
 
-            // Do loop extraction
-            var extractionInfo = program.ExtractLoops();
+            // Boogie 3.5.6's LoopExtractor does not always propagate modifies
+            // from callees onto extracted loop procedures. Stratified inlining
+            // relies on those modifies for sound over-approximation.
+            var changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                {
+                    if (impl.Proc is not LoopProcedure)
+                    {
+                        continue;
+                    }
 
-            // Sort declarations by name so that the stratified inliner explores
-            // procedures in a deterministic order regardless of Boogie's internal
-            // static counter state (which affects how ExtractLoops names loop procs).
+                    var existingMods = new HashSet<string>(impl.Proc.Modifies.Select(ie => ie.Decl.Name));
+                    var newMods = new HashSet<string>();
+
+                    foreach (var blk in impl.Blocks)
+                    {
+                        foreach (var cmd in blk.Cmds.OfType<CallCmd>())
+                        {
+                            if (cmd.Proc == null)
+                            {
+                                continue;
+                            }
+
+                            foreach (var ie in cmd.Proc.Modifies)
+                            {
+                                if (!existingMods.Contains(ie.Decl.Name))
+                                {
+                                    newMods.Add(ie.Decl.Name);
+                                }
+                            }
+                        }
+                    }
+
+                    if (newMods.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    foreach (var gv in program.TopLevelDeclarations.OfType<GlobalVariable>())
+                    {
+                        if (newMods.Contains(gv.Name))
+                        {
+                            impl.Proc.Modifies.Add(new IdentifierExpr(Token.NoToken, gv));
+                        }
+                    }
+                    changed = true;
+                }
+            }
+
+            // Sort declarations by name after loop extraction so generated loop
+            // procedures are included in the deterministic order.
             program.TopLevelDeclarations =
                 program.TopLevelDeclarations.OrderBy(d => (d is NamedDeclaration nd) ? nd.Name : "").ToList();
-
-            // restore RB
-            CommandLineOptions.Clo.RecursionBound = rb;
 
             // set bounds
             if (options.extraRecBound != null)
@@ -158,14 +205,14 @@ namespace cba.Util
             var mains = new List<Implementation>(
                 program.TopLevelDeclarations
                 .OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint")));
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null));
 
 
-            VC.VCGen vcgen = null;
+            CoreLib.StratifiedInlining vcgen = null;
             try
             {
-                Debug.Assert(CommandLineOptions.Clo.StratifiedInlining > 0);
-                vcgen = new CoreLib.StratifiedInlining(program, CommandLineOptions.Clo.ProverLogFilePath, CommandLineOptions.Clo.ProverLogFileAppend, null);
+                Debug.Assert(BoogieUtil.BoogieOptions.StratifiedInlining > 0);
+                vcgen = new CoreLib.StratifiedInlining(program, BoogieUtil.BoogieOptions.ProverLogFilePath, BoogieUtil.BoogieOptions.ProverLogFileAppend, null);
             }
             catch (ProverException e)
             {
@@ -186,13 +233,16 @@ namespace cba.Util
 
                 List<Counterexample> errors;
 
-                VC.VCGen.Outcome outcome;
+                VC.VcOutcome outcome;
 
                 try
                 {
                     var start = DateTime.Now;
 
-                    outcome = vcgen.VerifyImplementation(impl, out errors);
+                    var callback = new BoogieVerifyCallback();
+                    var run = new VC.ImplementationRun(impl, TextWriter.Null);
+                    outcome = vcgen.VerifyImplementation(run, callback, CancellationToken.None).GetAwaiter().GetResult();
+                    errors = callback.Counterexamples;
 
                     var end = DateTime.Now;
 
@@ -202,37 +252,33 @@ namespace cba.Util
                     verificationTime += elapsed;
                     if (recordTempTime) tempTime += elapsed;
                 }
-                catch (VC.VCGenException e)
+                catch (VCGenException e)
                 {
                     throw new InternalError("VCGenException: " + e.Message);
-                    //errors = null;
-                    //outcome = VC.VCGen.Outcome.Inconclusive;
                 }
                 catch (UnexpectedProverOutputException upo)
                 {
 
                     throw new InternalError("Unexpected prover output: " + upo.Message);
-                    //errors = null;
-                    //outcome = VC.VCGen.Outcome.Inconclusive;
                 }
 
                 switch (outcome)
                 {
-                    case VC.VCGen.Outcome.Correct:
+                    case VC.VcOutcome.Correct:
                         break;
-                    case VC.VCGen.Outcome.Errors:
+                    case VC.VcOutcome.Errors:
                         break;
-                    case VC.VCGen.Outcome.ReachedBound:
+                    case VC.VcOutcome.Inconclusive:
                         ret = ReturnStatus.ReachedBound;
                         break;
-                    case VC.VCGen.Outcome.Inconclusive:
+                    case VC.VcOutcome.SolverException:
                         throw new InternalError("z3 says inconclusive");
-                    case VC.VCGen.Outcome.OutOfMemory:
+                    case VC.VcOutcome.OutOfMemory:
                         // wipe out any counterexamples
                         timedOut.Add(impl.Name); errors = new List<Counterexample>();
                         break;
-                    case VC.VCGen.Outcome.OutOfResource:
-                    case VC.VCGen.Outcome.TimedOut:
+                    case VC.VcOutcome.OutOfResource:
+                    case VC.VcOutcome.TimedOut:
                         // wipe out any counterexamples
                         timedOut.Add(impl.Name); errors = new List<Counterexample>();
                         break;
@@ -243,10 +289,10 @@ namespace cba.Util
                 Log.WriteLine(Log.Debug, outcome.ToString());
 
                 Log.WriteLine(Log.Debug, (errors == null ? 0 : errors.Count) + " counterexamples.");
-                if (errors != null) ret = ReturnStatus.NOK;
+                if (outcome == VC.VcOutcome.Errors) ret = ReturnStatus.NOK;
 
                 // Print model
-                if (errors != null && errors.Count > 0 && errors[0].Model != null && CommandLineOptions.Clo.ModelViewFile != null)
+                if (errors != null && errors.Count > 0 && errors[0].Model != null && BoogieUtil.BoogieOptions.ModelViewFile != null)
                 {
                     var model = errors[0].Model;
                     var cnt = 0;
@@ -258,7 +304,7 @@ namespace cba.Util
                         }
                     });
 
-                    using (var wr = new StreamWriter(CommandLineOptions.Clo.ModelViewFile, false))
+                    using (var wr = new StreamWriter(BoogieUtil.BoogieOptions.ModelViewFile, false))
                     {
                         model.Write(wr);
                     }
@@ -271,9 +317,9 @@ namespace cba.Util
                         //errors[i].Print(1, Console.Out);
 
                         // Map the trace across loop extraction
-                        if (vcgen is VC.VCGen)
+                        if (extractionInfo != null)
                         {
-                            errors[i] = (vcgen as VC.VCGen).extractLoopTrace(errors[i], impl.Name, program, extractionInfo);
+                            errors[i] = vcgen.ExtractLoopTrace(errors[i], impl.Name, program, extractionInfo);
                         }
 
                         if (errors[i] is AssertCounterexample)
@@ -303,9 +349,23 @@ namespace cba.Util
             }
 
             vcgen.Close();
-            CommandLineOptions.Clo.TheProverFactory.Close();
+            BoogieUtil.BoogieOptions.TheProverFactory.Close();
 
             return ret;
+        }
+
+        private class BoogieVerifyCallback : VerifierCallback
+        {
+            public List<Counterexample> Counterexamples { get; } = new List<Counterexample>();
+
+            public BoogieVerifyCallback() : base(CoreOptions.ProverWarnings.None)
+            {
+            }
+
+            public override void OnCounterexample(Counterexample ce, string reason)
+            {
+                Counterexamples.Add(ce);
+            }
         }
 
         private static void DFS(Block root, Block parent, Func<Block, IEnumerable<Block>> Succ, Dictionary<Block, int> color, Dictionary<Block, Block> parentTree, List<Block> cycle)
@@ -373,8 +433,8 @@ namespace cba.Util
                 if (blk.TransferCmd is GotoCmd)
                 {
                     var gc = blk.TransferCmd as GotoCmd;
-                    gc.labelNames = new List<string>(
-                        gc.labelNames.Select(lab => impl.Name + "_" + lab));
+                    gc.LabelNames = new List<string>(
+                        gc.LabelNames.Select(lab => impl.Name + "_" + lab));
                 }
 
                 if (blk.TransferCmd is ReturnCmd)
@@ -400,7 +460,7 @@ namespace cba.Util
         {
             var mains = program.TopLevelDeclarations
                 .OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"));
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null);
 
             foreach (var main in mains)
             {
@@ -449,7 +509,7 @@ namespace cba.Util
         {
             var mains = program.TopLevelDeclarations
                 .OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"));
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null);
 
             foreach (var main in mains)
             {
@@ -458,7 +518,7 @@ namespace cba.Util
                     Debug.Assert(blk.Cmds.Count > 0);
                     var acmd = blk.Cmds.Last() as AssumeCmd;
                     Debug.Assert(acmd != null);
-                    Debug.Assert(QKeyValue.FindBoolAttribute(acmd.Attributes, "OldAssert"));
+                    Debug.Assert(QKeyValue.FindAttribute(acmd.Attributes, attr => attr.Key == "OldAssert") != null);
                     var expr = acmd.Expr as NAryExpr;
                     Debug.Assert(expr != null);
                     Debug.Assert(expr.Fun is UnaryOperator);
@@ -477,12 +537,12 @@ namespace cba.Util
             RemoveAsserts(program);
 
             //// ---------- Verify ----------------------------------------------------------------
-            Debug.Assert(CommandLineOptions.Clo.StratifiedInlining > 0);
+            Debug.Assert(BoogieUtil.BoogieOptions.StratifiedInlining > 0);
 
-            VC.StratifiedVCGenBase vcgen = null;
+            VC.StratifiedVerificationConditionGeneratorBase vcgen = null;
             try
             {
-                vcgen = new CoreLib.StratifiedInlining(program, CommandLineOptions.Clo.ProverLogFilePath, CommandLineOptions.Clo.ProverLogFileAppend, null);
+                vcgen = new CoreLib.StratifiedInlining(program, BoogieUtil.BoogieOptions.ProverLogFilePath, BoogieUtil.BoogieOptions.ProverLogFileAppend, null);
             }
             catch (ProverException)
             {
@@ -492,14 +552,14 @@ namespace cba.Util
 
             var mains = program.TopLevelDeclarations
                 .OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"));
+                .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null);
 
             if (mains.Count() != 1)
                 throw new InternalError("Wrong number of entrypoints for FindLeastToverify");
 
             var main = mains.First();
 
-            VC.VCGen.Outcome outcome;
+            VC.VcOutcome outcome;
             //HashSet<string> minVars = new HashSet<string>();
 
             try
@@ -516,44 +576,38 @@ namespace cba.Util
                 verificationTime += elapsed;
                 if (recordTempTime) tempTime += elapsed;
             }
-            catch (VC.VCGenException e)
+            catch (VCGenException e)
             {
                 throw new InternalError("VCGenException: " + e.Message);
-                //errors = null;
-                //outcome = VC.VCGen.Outcome.Inconclusive;
             }
             catch (UnexpectedProverOutputException upo)
             {
 
                 throw new InternalError("Unexpected prover output: " + upo.Message);
-                //errors = null;
-                //outcome = VC.VCGen.Outcome.Inconclusive;
             }
 
             switch (outcome)
             {
-                case VC.VCGen.Outcome.Correct:
+                case VC.VcOutcome.Correct:
                     break;
-                case VC.VCGen.Outcome.Errors:
+                case VC.VcOutcome.Errors:
                     Debug.Assert(false);
                     break;
-                case VC.VCGen.Outcome.ReachedBound:
-                    Debug.Assert(false);
-                    break;
-                case VC.VCGen.Outcome.Inconclusive:
+                case VC.VcOutcome.Inconclusive:
+                case VC.VcOutcome.SolverException:
                     throw new InternalError("z3 says inconclusive");
-                case VC.VCGen.Outcome.OutOfMemory:
+                case VC.VcOutcome.OutOfMemory:
                     throw new InternalError("z3 out of memory");
-                case VC.VCGen.Outcome.OutOfResource:
-                case VC.VCGen.Outcome.TimedOut:
+                case VC.VcOutcome.OutOfResource:
+                case VC.VcOutcome.TimedOut:
                     throw new InternalError("z3 timed out");
                 default:
                     throw new InternalError("z3 unknown response");
             }
-            Debug.Assert(outcome == VC.VCGen.Outcome.Correct);
+            Debug.Assert(outcome == VC.VcOutcome.Correct);
 
             vcgen.Close();
-            CommandLineOptions.Clo.TheProverFactory.Close();
+            BoogieUtil.BoogieOptions.TheProverFactory.Close();
             return boolVars;
         }
 
@@ -596,10 +650,10 @@ namespace cba.Util
                     // to guard against vagaries of Boogie.)
 
                     //Log.Out(Log.Normal, "Could not find block " + b.Label);
-                    //b.Emit(new TokenTextWriter(Console.Out), 0);
+                    //b.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                     for (int numInstr = 0; numInstr < b.Cmds.Count; numInstr++)
                     {
-                        if (trace.calleeCounterexamples.ContainsKey(new TraceLocation(numBlock, numInstr)))
+                        if (trace.CalleeCounterexamples.ContainsKey(new TraceLocation(numBlock, numInstr)))
                         {
                             throw new InternalError("BoogieVerify: An intermediate block has a procedure call");
                         }
@@ -617,17 +671,17 @@ namespace cba.Util
                     for (int numInstr = 0; numInstr < b.Cmds.Count; numInstr++)
                     {
                         var loc = new TraceLocation(numBlock, numInstr);
-                        if (trace.calleeCounterexamples.ContainsKey(loc))
+                        if (trace.CalleeCounterexamples.ContainsKey(loc))
                         {
                             Cmd c = b.Cmds[numInstr];
-                            var calleeName = trace.getCalledProcName(c);
-                            var calleeTrace = trace.calleeCounterexamples[loc].counterexample;
+                            var calleeName = trace.GetCalledProcName(c);
+                            var calleeTrace = trace.CalleeCounterexamples[loc].Counterexample;
                             ReconstructImperativeTrace(calleeTrace, calleeName, origProg);
                             calleeTraces.Add(
                                 new Duple<string, CalleeCounterexampleInfo>(
                                     calleeName,
                                     new CalleeCounterexampleInfo(calleeTrace,
-                                        trace.calleeCounterexamples[loc].args)
+                                        trace.CalleeCounterexamples[loc].Args)
                                         ));
                         }
                     }
@@ -670,7 +724,7 @@ namespace cba.Util
             }
             trace.Trace = newBlocks;
             // reset other info. Safe thing to do unless we know what it is
-            trace.calleeCounterexamples = newCalleeTraces;
+            trace.CalleeCounterexamples = newCalleeTraces;
         }
     }
 
@@ -695,6 +749,7 @@ namespace cba.Util
 
         public bool StratifiedInliningWithoutModels;
         public bool UseProverEvaluate;
+        public bool SIBoolControlVC;
         public string ModelViewFile;
 
         // Extended API
@@ -707,6 +762,7 @@ namespace cba.Util
             CallTree = null;
             StratifiedInliningWithoutModels = false;
             UseProverEvaluate = true;
+            SIBoolControlVC = true;
             ModelViewFile = null;
             extraRecBound = new Dictionary<string, int>();
         }
@@ -722,8 +778,9 @@ namespace cba.Util
             }
             ret.StratifiedInliningWithoutModels = StratifiedInliningWithoutModels;
             ret.UseProverEvaluate = UseProverEvaluate;
+            ret.SIBoolControlVC = SIBoolControlVC;
             ret.ModelViewFile = ModelViewFile;
-            ret.extraRecBound = new Dictionary<string, int>(ret.extraRecBound);
+            ret.extraRecBound = new Dictionary<string, int>(extraRecBound);
 
             return ret;
         }
@@ -732,11 +789,12 @@ namespace cba.Util
         // overwrite all options set by a previous call to Set
         public void Set()
         {
-            CommandLineOptions.Clo.StratifiedInlining = StratifiedInlining;
-            CommandLineOptions.Clo.StratifiedInliningWithoutModels = StratifiedInliningWithoutModels;
-            CommandLineOptions.Clo.UseProverEvaluate = UseProverEvaluate;
+            BoogieUtil.BoogieOptions.StratifiedInlining = StratifiedInlining;
+            BoogieUtil.BoogieOptions.StratifiedInliningWithoutModels = StratifiedInliningWithoutModels;
+            BoogieUtil.BoogieOptions.UseProverEvaluate = UseProverEvaluate;
+            BoogieUtil.BoogieOptions.SIBoolControlVC = SIBoolControlVC;
             if (!StratifiedInliningWithoutModels && ModelViewFile != null)
-                CommandLineOptions.Clo.ModelViewFile = ModelViewFile;
+                BoogieUtil.BoogieOptions.ModelViewFile = ModelViewFile;
         }
     }
 
@@ -779,10 +837,10 @@ namespace cba.Util
                 {
                     Cmd c = b.Cmds[numInstr];
                     var loc = new TraceLocation(numBlock, numInstr);
-                    if (cex.calleeCounterexamples.ContainsKey(loc))
+                    if (cex.CalleeCounterexamples.ContainsKey(loc))
                     {
                         printIndent(ttw, indent); ttw.WriteLine("call to {0}:", (c as CallCmd).Proc.Name);
-                        printLabels(cex.calleeCounterexamples[loc].counterexample, ttw, indent + 1);
+                        printLabels(cex.CalleeCounterexamples[loc].Counterexample, ttw, indent + 1);
                         printIndent(ttw, indent); ttw.WriteLine("return from {0}.", (c as CallCmd).Proc.Name);
                         printIndent(ttw, indent); ttw.WriteLine(b.Label);
                     }
@@ -837,7 +895,7 @@ namespace cba.Util
             List<String> prev_labels = null;
             foreach (Block b in cex.Trace)
             {
-                //b.Emit(new TokenTextWriter(Console.Out), 0);
+                //b.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
                 if (prev_labels != null)
                 {
                     if (!prev_labels.Contains(b.Label))
@@ -861,7 +919,7 @@ namespace cba.Util
                 GotoCmd gcmd = b.TransferCmd as GotoCmd;
                 if (gcmd != null)
                 {
-                    prev_labels = gcmd.labelNames;
+                    prev_labels = gcmd.LabelNames;
                 }
                 else
                 {
@@ -894,7 +952,7 @@ namespace cba.Util
         public bool verifyTrace(out Program newProg)
         {
             // Currently, this only works for intraprocedural traces
-            Debug.Assert(acex.calleeCounterexamples.Count == 0);
+            Debug.Assert(acex.CalleeCounterexamples.Count == 0);
 
             HashSet<string> calledProcs;
             Implementation traceImpl = getImplementation(out calledProcs);
@@ -919,7 +977,7 @@ namespace cba.Util
                     else if (tmp.Name == impl.Name)
                     {
                         Procedure pex = new Procedure(Token.NoToken, tmp.Name + "_cex", tmp.TypeParameters, tmp.InParams,
-                            tmp.OutParams, tmp.Requires, tmp.Modifies, tmp.Ensures, tmp.Attributes);
+                            tmp.OutParams, tmp.IsPure, tmp.Requires, tmp.Preserves, tmp.Ensures, tmp.Modifies, tmp.Attributes);
                         newProg.AddTopLevelDeclaration(pex);
                     }
                 }

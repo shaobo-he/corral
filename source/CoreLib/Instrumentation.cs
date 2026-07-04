@@ -413,7 +413,8 @@ namespace cba
                     new Procedure(
                         Token.NoToken, LanguageSemantics.assertNotReachableName(),
                         new List<TypeVariable>(), new List<Variable>(), new List<Variable>(),
-                        new List<Requires>(), new List<IdentifierExpr>(), new List<Ensures>()));
+                        false, new List<Requires>(), new List<Requires>(), new List<Ensures>(),
+                        new List<IdentifierExpr>()));
 
             }
             else
@@ -939,14 +940,6 @@ namespace cba
                                 continue;
                             }
                             currCmds.Add(BoogieAstFactory.MkVarEqConst(outv.Decl, 1));
-                            addedTrans(impl.Name, blk.Label, incnt, cmd, currLabel, currCmds);
-                            continue;
-                        }
-
-                        // Remove yield statements
-                        if (cmd is YieldCmd)
-                        {
-                            currCmds.Add(BoogieAstFactory.MkAssume(Expr.True));
                             addedTrans(impl.Name, blk.Label, incnt, cmd, currLabel, currCmds);
                             continue;
                         }
