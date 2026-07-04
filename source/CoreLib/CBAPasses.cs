@@ -205,8 +205,8 @@ namespace cba
 
             var procsWithIrreducibleLoops = new HashSet<string>();
             var passInfo = LoopExtractor.ExtractLoops(BoogieUtil.BoogieOptions, p);
-            p.Resolve(BoogieUtil.BoogieOptions);
-            p.Typecheck(BoogieUtil.BoogieOptions);
+            BoogieUtil.ResolveProgram(p);
+            BoogieUtil.TypecheckProgram(p);
 
             // restore RB
             BoogieUtil.RecursionBound = rb;

@@ -94,6 +94,7 @@ namespace cba
             BoogieUtil.BoogieOptions.TypeEncodingMethod = CoreOptions.TypeEncoding.Monomorphic;
             BoogieUtil.BoogieOptions.EnableUnSatCoreExtract = 1;
             BoogieUtil.BoogieOptions.UseProverEvaluate = true;
+            BoogieUtil.BoogieOptions.InferModifies = true;
 
             // /noRemoveEmptyBlocks is needed for field refinement. It ensures that
             // we get an actual path in the program (so that we can concretize it)

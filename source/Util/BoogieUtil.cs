@@ -40,11 +40,16 @@ namespace cba.Util
                 .ToDictionary(proc => proc.Name);
             foreach (var impl in p.TopLevelDeclarations.OfType<Implementation>())
             {
+                if (procByName.TryGetValue(impl.Name, out var implProc))
+                {
+                    impl.Proc = implProc;
+                }
+
                 foreach (var block in impl.Blocks)
                 {
                     foreach (var cmd in block.Cmds.OfType<CallCmd>())
                     {
-                        if (cmd.Proc == null && procByName.TryGetValue(cmd.callee, out var proc))
+                        if (procByName.TryGetValue(cmd.callee, out var proc))
                         {
                             cmd.Proc = proc;
                         }
@@ -63,7 +68,7 @@ namespace cba.Util
 
         public static bool ResolveProgram(Program p, string filename)
         {
-            int errorCount = p.Resolve(BoogieOptions);
+            int errorCount = ResolveProgram(p);
             if (errorCount != 0)
                 Console.WriteLine(errorCount + " name resolution errors in " + filename);
             return errorCount != 0;
@@ -71,13 +76,51 @@ namespace cba.Util
 
         public static bool TypecheckProgram(Program p, string filename)
         {
-            int errorCount = p.Typecheck(BoogieOptions);
+            int errorCount = TypecheckProgram(p);
             if (errorCount != 0)
             {
                 PrintProgram(p, "error.bpl");
                 Console.WriteLine(errorCount + " type checking errors in " + filename);
             }
             return errorCount != 0;
+        }
+
+        public static int ResolveProgram(Program p)
+        {
+            return WithLegacyAsyncCallsDisabled(p, () => p.Resolve(BoogieOptions));
+        }
+
+        public static int TypecheckProgram(Program p)
+        {
+            return WithLegacyAsyncCallsDisabled(p, () => p.Typecheck(BoogieOptions));
+        }
+
+        private static int WithLegacyAsyncCallsDisabled(Program p, Func<int> action)
+        {
+            var asyncCalls = p.TopLevelDeclarations
+                .OfType<Implementation>()
+                .SelectMany(impl => impl.Blocks)
+                .SelectMany(block => block.Cmds)
+                .OfType<CallCmd>()
+                .Where(cmd => cmd.IsAsync)
+                .ToList();
+
+            foreach (var cmd in asyncCalls)
+            {
+                cmd.IsAsync = false;
+            }
+
+            try
+            {
+                return action();
+            }
+            finally
+            {
+                foreach (var cmd in asyncCalls)
+                {
+                    cmd.IsAsync = true;
+                }
+            }
         }
 
         public static HashSet<string> getGlobalVarsModified(Cmd cmd, HashSet<string> procsWithImpl)

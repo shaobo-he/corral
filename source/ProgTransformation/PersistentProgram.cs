@@ -273,7 +273,7 @@ namespace ProgTransformation
                 }
             }
 
-            if (ret.Resolve(BoogieUtil.BoogieOptions) != 0)
+            if (BoogieUtil.ResolveProgram(ret) != 0)
             {
                 writeToFile("error.bpl");
                 throw new InternalError("Illegal program given to PersistentProgram");
@@ -325,7 +325,7 @@ namespace ProgTransformation
             FixedDuplicator dup = new FixedDuplicator();
             Program ret = dup.VisitProgram(program);
 
-            if (ret.Resolve(BoogieUtil.BoogieOptions) != 0 || ret.Typecheck(BoogieUtil.BoogieOptions) != 0)
+            if (BoogieUtil.ResolveProgram(ret) != 0 || BoogieUtil.TypecheckProgram(ret) != 0)
             {
                 BoogieUtil.PrintProgram(ret, "error.bpl");
                 throw new InternalError("Illegal program given to PersistentProgram");

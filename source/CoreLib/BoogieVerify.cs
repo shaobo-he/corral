@@ -114,8 +114,8 @@ namespace cba.Util
             // Extract loops into recursive procedures before VCGen. With
             // SIBoolControlVC, passification assumes an acyclic block graph.
             var extractionInfo = LoopExtractor.ExtractLoops(BoogieUtil.BoogieOptions, program);
-            program.Resolve(BoogieUtil.BoogieOptions);
-            program.Typecheck(BoogieUtil.BoogieOptions);
+            BoogieUtil.ResolveProgram(program);
+            BoogieUtil.TypecheckProgram(program);
 
             // Boogie 3.5.6's LoopExtractor does not always propagate modifies
             // from callees onto extracted loop procedures. Stratified inlining

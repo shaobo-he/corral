@@ -228,7 +228,7 @@ namespace cba
 
             var p = upperProg.getCBAProgram();
 
-            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
+            if (BoogieUtil.TypecheckProgram(p) != 0)
             {
                 p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
                 throw new InternalError("Type errors");
@@ -246,7 +246,7 @@ namespace cba
             //faProg.writeToFile("error.bpl");
             faProgProg = faProg.getProgram();
 
-            var t = faProgProg.Typecheck(BoogieUtil.BoogieOptions);
+            var t = BoogieUtil.TypecheckProgram(faProgProg);
             Debug.Assert(t == 0);
 
             //BoogieUtil.PrintProgram(faProgProg, "refine.bpl");
@@ -305,7 +305,7 @@ namespace cba
             var upperProg = vp1.run(program);
 
             var p = upperProg.getCBAProgram();
-            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
+            if (BoogieUtil.TypecheckProgram(p) != 0)
             {
                 p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
                 throw new InternalError("Type errors");
@@ -319,7 +319,7 @@ namespace cba
 
             var faProgProg = faProg.getProgram();
 
-            var t = faProgProg.Typecheck(BoogieUtil.BoogieOptions);
+            var t = BoogieUtil.TypecheckProgram(faProgProg);
             Debug.Assert(t == 0);
 
             boolVars = BoogieVerify.FindLeastToVerify(faProgProg, boolVars);

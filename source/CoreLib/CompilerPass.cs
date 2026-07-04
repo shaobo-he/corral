@@ -533,9 +533,9 @@ namespace cba
             // Type information is needed in some cases. For instance, the Command
             // Mem[x] := untracked-expr is converted to havoc temp; Mem[x] := temp. Here
             // we need the type of "untracked-expr" or of "Mem[x]"
-            if (p.Typecheck(BoogieUtil.BoogieOptions) != 0)
+            if (BoogieUtil.TypecheckProgram(p) != 0)
             {
-                p.Emit(new TokenTextWriter("error.bpl", BoogieUtil.BoogieOptions));
+                BoogieUtil.PrintProgram(p, "error.bpl");
                 throw new InternalError("Type errors");
             }
             vslice.VisitProgram(p as Program);

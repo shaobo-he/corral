@@ -112,6 +112,7 @@ namespace CoreLib
             base(TextWriter.Null, BoogieUtil.BoogieOptions, program, logFilePath, appendLogFile, new CheckerPool(BoogieUtil.BoogieOptions), PassiveImplInstrumentation)
         {
             stats = new Stats();
+            InstallCodeExprConverter();
 
             this.extraRecBound = new Dictionary<string, int>();
             program.TopLevelDeclarations.OfType<Implementation>()
@@ -127,6 +128,14 @@ namespace CoreLib
             implementations = new HashSet<string>(implName2StratifiedInliningInfo.Keys);
 
             forceInlineProcs = new HashSet<string>();
+        }
+
+        private void InstallCodeExprConverter()
+        {
+            var absyIds = new ControlFlowIdMap<Absy>();
+            var codeExprConverter = new VC.VerificationConditionGenerator.CodeExprConversionClosure(
+                TextWriter.Null, BoogieUtil.BoogieOptions, absyIds, prover.Context);
+            prover.Context.BoogieExprTranslator.SetCodeExprConverter(codeExprConverter.CodeExprToVerificationCondition);
         }
 
         /* depth in the call tree */
