@@ -12,175 +12,6 @@ using System.Diagnostics.Contracts;
 
 namespace cba
 {
-    /*
-     
-    // A class that only keeps basic block labels along a trace
-    // (and the call-return structure)
-    // This class is kept in this simple form by design. It is the responsibility
-    // of the user to ensure that this trace is paired along with the program in which
-    // it represents a valid path.
-    public class ErrorTraceLabels
-    {
-        // A trace is a sequence of labels in a single procedure. Along with each
-        // label, one may have traces associated with procedures called from that block
-
-        // The procedure
-        public string procName { get; private set; }
-        // The blocks
-        public List<string> labels { get; private set; }
-        // Called procedures
-        public List<List<ErrorTraceLabels>> calledTraces { get; private set; }
-        // Does this trace return from this procedure
-        public bool returns { get; private set; }
-
-        public ErrorTraceLabels(string pName)
-        {
-            procName = pName;
-            returns = false;
-            labels = new List<string>();
-            calledTraces = new List<List<ErrorTraceLabels>>();
-        }
-
-        public void addSucc(string succ)
-        {
-            Debug.Assert(returns == false);
-
-            // Where do we add succ?
-            ErrorTraceLabels currTrace = getCurrTrace();
-
-            if (currTrace == null)
-            {
-                // It is an intra succ in the current procedure
-                labels.Add(succ);
-                calledTraces.Add(new List<ErrorTraceLabels>());
-            }
-            else
-            {
-                currTrace.addSucc(succ);
-            }
-
-        }
-
-        public void addReturn()
-        {
-            Debug.Assert(returns == false);
-            Debug.Assert(labels.Count != 0);
-
-            // Where do we add succ?
-            ErrorTraceLabels currTrace = getCurrTrace();
-
-            if (currTrace == null)
-            {
-                returns = true;
-            }
-            else
-            {
-                currTrace.addReturn();
-            }
-
-        }
-
-        public void addCall(string callee)
-        {
-            Debug.Assert(returns == false);
-            Debug.Assert(labels.Count != 0);
-
-            // Where do we add succ?
-            ErrorTraceLabels currTrace = getCurrTrace();
-
-            if (currTrace == null)
-            {
-                ErrorTraceLabels curr = new ErrorTraceLabels(callee);
-                calledTraces[labels.Count - 1].Add(curr);
-            }
-            else
-            {
-                currTrace.addCall(callee);
-            }
-        }
-
-        public void addCall(ErrorTraceLabels trace)
-        {
-            Debug.Assert(trace.returns);
-            Debug.Assert(returns == false);
-            Debug.Assert(labels.Count != 0);
-            
-            // Where do we add succ?
-            ErrorTraceLabels currTrace = getCurrTrace();
-
-            if (currTrace == null)
-            {
-                calledTraces[labels.Count - 1].Add(trace);
-            }
-            else
-            {
-                currTrace.addCall(trace);
-            }
-        }
-
-        // Return the trace that hasn't returned: either it is this one
-        // (return null) or the last called trace
-        private ErrorTraceLabels getCurrTrace()
-        {
-            if (labels.Count == 0) return null;
-            int n = labels.Count;
-
-            var ls = calledTraces[n - 1];
-            if (ls.Count == 0) return null;
-
-            n = ls.Count;
-
-            if (ls[n - 1].returns == false)
-            {
-                return ls[n - 1];
-            }
-
-            return null;
-        }
-
-        // Return true if the trace has no called traces
-        public bool isIntra()
-        {
-            for (int i = 0; i < labels.Count; i++)
-            {
-                if (calledTraces[i].Count != 0)
-                    return false;
-            }
-            return true;
-        }
-
-        public void printTrace(TokenTextWriter ttw)
-        {
-            printTrace(ttw, 0);
-        }
-
-        private void printTrace(TokenTextWriter ttw, int indent)
-        {
-            for (int i = 0; i < labels.Count; i++)
-            {
-                printIndent(ttw, indent); ttw.WriteLine(procName + ":" + labels[i]);
-
-                for (int j = 0; j < calledTraces[i].Count; j++)
-                {
-                    calledTraces[i][j].printTrace(ttw, indent + 1);
-                    if (calledTraces[i][j].returns)
-                    {
-                        printIndent(ttw, indent); ttw.WriteLine(procName + ":" + labels[i]);
-                    }
-                }
-            }
-        }
-
-        private void printIndent(TokenTextWriter ttw, int indent)
-        {
-            for (int i = 0; i < indent; i++)
-            {
-                ttw.Write(" ");
-            }
-        }
-    }
-    */
-
     // Represents an interprocedural path through a program. It does not store
     // the control-transfer instructions (goto, return). Should add these once
     // there is some use for them.
@@ -217,7 +48,7 @@ namespace cba
             Blocks = new List<ErrorTraceBlock>();
             returns = false;
             raisesException = false;
-            blockMap  = null;
+            blockMap = null;
             Blocks.Add(new ErrorTraceBlock(_startingBlockName));
         }
 
@@ -308,7 +139,7 @@ namespace cba
             if (currTrace == null)
             {
                 // It is an intra succ in the current procedure
-                Blocks[Blocks.Count -1].addInstr(instr);
+                Blocks[Blocks.Count - 1].addInstr(instr);
             }
             else
             {
@@ -359,7 +190,7 @@ namespace cba
         public bool checkSanity()
         {
             var calleeAllReturn = true;
-            for(int j = 0; j < Blocks.Count; j++)
+            for (int j = 0; j < Blocks.Count; j++)
             {
                 var blk = Blocks[j];
                 for (int i = 0; i < blk.Cmds.Count; i++)
@@ -515,7 +346,7 @@ namespace cba
             return (newVal.Count != 0);
         }
 
-        private static void updateTidInfo(ErrorTrace trace,Dictionary<int, int> newVal)
+        private static void updateTidInfo(ErrorTrace trace, Dictionary<int, int> newVal)
         {
             if (trace == null) return;
             foreach (var blk in trace.Blocks)
@@ -633,14 +464,17 @@ namespace cba
         }
          */
 
-        private static void fetchInfo(InstrInfo info, ref int k, ref int tid) {
+        private static void fetchInfo(InstrInfo info, ref int k, ref int tid)
+        {
             if (info == null)
                 return;
 
-            if(info.executionContext >= 0) {
+            if (info.executionContext >= 0)
+            {
                 k = info.executionContext;
             }
-            if(info.tid >= 0) {
+            if (info.tid >= 0)
+            {
                 tid = info.tid;
             }
         }
@@ -674,7 +508,7 @@ namespace cba
         // Find the first occurance of "pred" along the trace
         public static Tuple<Implementation, Block, int> FindCmd(Program program, ErrorTrace trace, Predicate<Cmd> pred)
         {
-            if(trace == null) return null;
+            if (trace == null) return null;
 
             var impl = BoogieUtil.findProcedureImpl(program.TopLevelDeclarations, trace.procName);
             var l2b = BoogieUtil.labelBlockMapping(impl);
@@ -704,10 +538,10 @@ namespace cba
     public class ErrorTraceBlock
     {
         // The block label
-        public string blockName {get; private set;}
+        public string blockName { get; private set; }
 
         // The sequence of instructions in the block
-        public List<ErrorTraceInstr> Cmds {get; private set;}
+        public List<ErrorTraceInstr> Cmds { get; private set; }
 
         // Info for the block header
         public InstrInfo info;
@@ -757,7 +591,7 @@ namespace cba
         public ErrorTraceBlock Copy()
         {
             var ret = new ErrorTraceBlock(blockName);
-            if(info != null) ret.info = info.Copy();
+            if (info != null) ret.info = info.Copy();
             foreach (var inst in Cmds)
             {
                 ret.addInstr(inst.Copy());
@@ -817,7 +651,7 @@ namespace cba
 
     // Interface for an instruction in an error trace. 
     [Serializable]
-    abstract public class ErrorTraceInstr 
+    abstract public class ErrorTraceInstr
     {
         [NonSerialized]
         public InstrInfo info;
@@ -913,7 +747,7 @@ namespace cba
         public CallInstr(string callee, ErrorTrace et, bool async, InstrInfo _info)
             : base()
         {
-            if(_info != null) base.info = _info;
+            if (_info != null) base.info = _info;
             this.callee = callee;
             calleeTrace = et;
             asyncCall = async;
@@ -931,7 +765,7 @@ namespace cba
         public void SetErrorTrace(ErrorTrace ctrace)
         {
             calleeTrace = ctrace;
-            if(calleeTrace != null)
+            if (calleeTrace != null)
                 Debug.Assert(callee == calleeTrace.procName);
         }
 
@@ -1155,7 +989,7 @@ namespace cba
 
         public void removeVar(string varName)
         {
-            if(varToVal.ContainsKey(varName)) varToVal.Remove(varName);
+            if (varToVal.ContainsKey(varName)) varToVal.Remove(varName);
         }
     }
 
@@ -1206,14 +1040,15 @@ namespace cba
 
     // For storing data values
     [Serializable]
-    public class ModelInstrInfo : InstrInfo,ISerializable
+    public class ModelInstrInfo : InstrInfo, ISerializable
     {
-        public int index {get; private set;}
+        public int index { get; private set; }
         public Model model { get; private set; }
         // a pointer to model.States[index]
         Model.CapturedState state;
 
-        public ModelInstrInfo() : base() {
+        public ModelInstrInfo() : base()
+        {
             index = -1;
         }
 
@@ -1263,7 +1098,8 @@ namespace cba
     public class PrintInstrInfo : InstrInfo
     {
         public PrintInstrInfo(InstrInfo info) :
-            base(info) { }
+            base(info)
+        { }
 
         public override InstrInfo Copy()
         {
@@ -1271,298 +1107,4 @@ namespace cba
         }
     }
 
-
-
-    // For printing a program and a path in it. The output can be pulled in by
-    // concurrency explorer.
-    public static class PrintProgramPath
-    {
-        private static List<WorkItem> stack;
-        private static string fileName;
-        private static Dictionary<string, Implementation> nameImplMap;
-        private static TokenTextWriter pathFile;
-        private static int eventID;
-
-        public static void print(PersistentProgram program, ErrorTrace trace, string file)
-        {
-            setupPrint(program, trace, file);
-            printProcTrace(trace);
-            pathFile.Close();
-        }
-
-        private static void setupPrint(PersistentProgram program, ErrorTrace trace, string file)
-        {
-            // Set output files
-            pathFile = new TokenTextWriter(file + "_trace.txt");
-            program.writeToFile(file + ".bpl");
-            Program prog = program.getProgram();
-
-            // Initialization
-            fileName = file + ".bpl";
-            nameImplMap = BoogieUtil.nameImplMapping(prog);
-            stack = new List<WorkItem>();
-            eventID = 1;
-
-            pathFile.WriteLine("s");
-            pathFile.WriteLine("#");
-        }
-
-        // Prints trace by recursively calling itself on calleeTraces
-        private static void printProcTrace(ErrorTrace trace) {
-            Debug.Assert(trace.Blocks.Count != 0);
-            Implementation impl = nameImplMap[trace.procName];
-            var nameBlockMap = BoogieUtil.labelBlockMapping(impl);
-            stack.Insert(0, new WorkItem(trace.procName, null));
-
-            // Walk through trace and impl in lock step
-            foreach (var tblk in trace.Blocks)
-            {
-                Block pblk = nameBlockMap[tblk.blockName];
-                stack[0].tok = pblk.tok as Token;
-                printLine();
-                
-                int pcnt = 0;
-                foreach (var tcmd in tblk.Cmds)
-                {
-                    stack[0].tok = pblk.Cmds[pcnt].tok as Token;
-
-                    if (tcmd.isCall())
-                    {
-                        Debug.Assert(pblk.Cmds[pcnt] is CallCmd);
-                        CallInstr cc = tcmd as CallInstr;
-
-                        printLine(tcmd.info, cc.asyncCall ? "FORK" : "");
-                        if (cc.hasCalledTrace)
-                        {
-                            printProcTrace(cc.calleeTrace);
-                            if (cc.calleeTrace.returns) printLine();
-                        }
-                    }
-                    else
-                    {
-                        printLine(tcmd.info);
-                    }
-
-                    pcnt++;
-                }
-            }
-            stack.RemoveAt(0);
-        }
-
-        public class WorkItem
-        {
-            public string procName;
-            public Token tok;
-
-            public WorkItem(string p, Token t)
-            {
-                procName = p;
-                tok = t;
-            }
-        }
-
-        private static void printLine()
-        {
-            printLine("");
-        }
-
-        private static void printLine(InstrInfo info)
-        {
-            printLine(info, "");
-        }
-
-        private static void printLine(InstrInfo info, string extra)
-        {
-            var str = "";
-            if (info != null && info is AssertFailInstrInfo)
-            {
-                str += "Assert Failed! ";
-            }
-
-            if (info != null)
-            {
-                str += info.ToString();
-            }
-
-            printLine(str + extra);
-        }
-
-        private static void printLine(string extra)
-        {
-            var stk = printStack();
-            pathFile.WriteLine("1 " + eventID.ToString() + " 3 1 c");
-            pathFile.WriteLine("1 " + eventID.ToString() + " 6 " + stk.Length.ToString() + " " + stk);
-            if (extra != "")
-            {
-                pathFile.WriteLine("1 " + eventID.ToString() + " 4 " + extra.Length.ToString() + " " + extra);
-            }
-            eventID++;
-        }
-
-        // Convert stack to a string
-        private static string printStack()
-        {
-            string ret = "";
-
-            foreach (var wi in stack)
-            {
-                ret += wi.procName + "|" + fileName + "|" + wi.tok.line + "|";
-            }
-
-            return ret;
-        }
-    }
-
-    public class InlineToTrace : Inliner
-    {
-        private static Stack<Dictionary<int, ErrorTrace>> traceStack = new Stack<Dictionary<int, ErrorTrace>>();
-
-        public InlineToTrace(Program program, InlineCallback cb)
-            :base(program, cb, -1)
-        { }
-
-        // Return callCmd -> callee trace
-        static Dictionary<int, ErrorTrace> FindCallsOnTrace(Implementation impl, ErrorTrace trace)
-        {
-            Debug.Assert(impl.Name == trace.procName);
-            var ret = new Dictionary<int, ErrorTrace>();
-            var labelToBlock = BoogieUtil.labelBlockMapping(impl);
-            foreach (var blk in trace.Blocks)
-            {
-                var pblk = labelToBlock[blk.blockName];
-                for (int i = 0; i < blk.Cmds.Count; i++)
-                {
-                    var cc = blk.Cmds[i] as CallInstr;
-                    if (cc == null || cc.calleeTrace == null)
-                        continue;
-                    
-                    Debug.Assert(pblk.Cmds[i] is CallCmd && QKeyValue.FindIntAttribute((pblk.Cmds[i] as CallCmd).Attributes, "InlineToTraceUniqueId", -1) != -1);
-                    ret.Add(QKeyValue.FindIntAttribute((pblk.Cmds[i] as CallCmd).Attributes, "InlineToTraceUniqueId", -1), cc.calleeTrace);
-                }
-            }
-
-            return ret;
-        }
-
-        static int uniqueId = 0;
-
-        static void AnnotateUniqueId(Implementation impl)
-        {
-            impl.Blocks
-                .Iter(blk => blk.Cmds.OfType<CallCmd>()
-                    .Iter(c => 
-                        c.Attributes = new QKeyValue(Token.NoToken, "InlineToTraceUniqueId", 
-                            new object[] { Expr.Literal(uniqueId++) }.ToList(), c.Attributes)));
-        }
-
-        public static void Inline(Program program, ErrorTrace trace)
-        {
-            var TopLevelDeclarations = program.TopLevelDeclarations;
-
-            foreach (var d in TopLevelDeclarations)
-            {
-                var impl = d as Implementation;
-                if (impl != null)
-                {
-                    impl.OriginalBlocks = impl.Blocks;
-                    impl.OriginalLocVars = impl.LocVars;
-                    AnnotateUniqueId(impl);
-                }
-            }
-            var entry = 
-            TopLevelDeclarations.OfType<Implementation>()
-                .Where(impl => QKeyValue.FindBoolAttribute(impl.Attributes, "entrypoint"));
-            if (entry.Count() != 1)
-                throw new InternalError("InlineToTrace requires a unique entry poiny");
-            var entryPoint = entry.First();
-            if (entryPoint.Name != trace.procName)
-                throw new InternalError("InlineToTrace didn't find the entry point for the given trace properly");
-
-            var inliner = new InlineToTrace(program, null);
-
-            traceStack.Push(FindCallsOnTrace(entryPoint, trace));
-            Inliner.ProcessImplementation(program, entryPoint, inliner);
-
-            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
-            {
-                impl.OriginalBlocks = null;
-                impl.OriginalLocVars = null;
-
-                // rename blocks and variables to avoid future naming conflicts with inlining
-                var rename = new RenameLabelsAndVariables();
-                impl.LocVars.Iter(v => rename.VisitVariable(v));
-                rename.VisitBlockList(impl.Blocks);
-            }
-        }
-        
-        public override List<Block> DoInlineBlocks(List<Block> blocks, ref bool inlinedSomething)
-        {
-            var ret = base.DoInlineBlocks(blocks, ref inlinedSomething);
-            traceStack.Pop();
-            return ret;
-        }
-
-        protected override int GetInlineCount(CallCmd callCmd, Implementation impl)
-        {
-            var id = QKeyValue.FindIntAttribute(callCmd.Attributes, "InlineToTraceUniqueId", -1);
-            if (id == -1) return -1;
-            var loc = traceStack.Peek();
-            if (!loc.ContainsKey(id)) return -1;
-            traceStack.Push(FindCallsOnTrace(impl, loc[id]));
-            recursiveProcUnrollMap[impl.Name] = 1;
-            return 1;
-
-        }
-        
-        // Change "inline$" to "itt$inline$" in block labels and 
-        class RenameLabelsAndVariables : FixedVisitor
-        {
-            public RenameLabelsAndVariables() { }
-            
-            public override Expr VisitIdentifierExpr(IdentifierExpr node)
-            {
-                if (node.Name.StartsWith("inline$"))
-                {
-                    node.Name = "itt$" + node.Name;
-                }
-                return base.VisitIdentifierExpr(node);
-            }
-            
-            public override LocalVariable VisitLocalVariable(LocalVariable node)
-            {
-                if (node.Name.StartsWith("inline$"))
-                {
-                    node.Name = "itt$" + node.Name;
-                }
-                node.TypedIdent.Name = node.Name;
-
-                return base.VisitLocalVariable(node);
-            }
-
-
-            public override Block VisitBlock(Block node)
-            {
-                if (node.Label.StartsWith("inline$"))
-                {
-                    node.Label = "itt$" + node.Label;
-                }
-
-                return base.VisitBlock(node);
-            }
-
-            public override GotoCmd VisitGotoCmd(GotoCmd node)
-            {
-                var ss = node.labelNames;
-                node.labelNames = new List<String>();
-                ss.OfType<string>().Iter(s =>
-                    {
-                        if (s.StartsWith("inline$"))
-                            node.labelNames.Add("itt$" + s);
-                        else
-                            node.labelNames.Add(s);
-                    });
-                return base.VisitGotoCmd(node);
-            }
-        }
-    }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -8,23 +8,6 @@ using System.Diagnostics;
 
 namespace cba.Util
 {
-    public static class BoogieAstExtensions
-    {
-        public static void SetAssignCmdRhs(this AssignCmd ac, int index, Expr expr)
-        {
-            var ls = new List<Expr>(ac.Rhss);
-            ls[index] = expr;
-            ac.Rhss = ls;
-        }
-
-        public static void SetAssignCmdLhs(this AssignCmd ac, int index, AssignLhs expr)
-        {
-            var ls = new List<AssignLhs>(ac.Lhss);
-            ls[index] = expr;
-            ac.Lhss = ls;
-        }
-    }
-
     public class BoogieUtil
     {
         public static bool InitializeBoogie(string clo)
@@ -100,9 +83,9 @@ namespace cba.Util
                 var ccmd = cmd as CallCmd;
                 foreach (IdentifierExpr v in ccmd.Outs)
                 {
-                    if(v.Decl is GlobalVariable) ret.Add(v.Decl.Name);
+                    if (v.Decl is GlobalVariable) ret.Add(v.Decl.Name);
                 }
-                
+
                 if (procsWithImpl.Contains(ccmd.Proc.Name))
                     return ret;
 
@@ -197,7 +180,7 @@ namespace cba.Util
                 foreach (var blk in impl.Blocks)
                 {
                     blk.Cmds.OfType<CallCmd>()
-                        .Iter(ccmd => edges.InitAndAdd(ccmd.callee, impl.Name)); 
+                        .Iter(ccmd => edges.InitAndAdd(ccmd.callee, impl.Name));
                     blk.Cmds.OfType<ParCallCmd>()
                         .Iter(pcmd => pcmd.CallCmds
                             .Iter(ccmd => edges.InitAndAdd(ccmd.callee, impl.Name)));
@@ -241,7 +224,7 @@ namespace cba.Util
         }
 
         // Return nodes on some cycle
-        public static HashSet<Node> GetCyclicNodes<Node>(Graph<Node> graph) where Node: class
+        public static HashSet<Node> GetCyclicNodes<Node>(Graph<Node> graph) where Node : class
         {
             var ret = new HashSet<Node>();
             var scc = new StronglyConnectedComponents<Node>(graph.Nodes,
@@ -250,7 +233,7 @@ namespace cba.Util
 
             foreach (var s in scc)
             {
-                if(s.Count == 0) continue;
+                if (s.Count == 0) continue;
 
                 if (s.Count > 1 || graph.Successors(s.First()).Contains(s.First()))
                 {
@@ -291,7 +274,7 @@ namespace cba.Util
                 var hcmd = cmd as HavocCmd;
                 foreach (IdentifierExpr v in hcmd.Vars)
                 {
-                        ret.Add(v.Decl.Name);
+                    ret.Add(v.Decl.Name);
                 }
                 return ret;
             }
@@ -300,7 +283,7 @@ namespace cba.Util
                 var ccmd = cmd as CallCmd;
                 foreach (IdentifierExpr v in ccmd.Outs)
                 {
-                    if(v != null) ret.Add(v.Decl.Name);
+                    if (v != null) ret.Add(v.Decl.Name);
                 }
 
                 if (procsWithImpl.Contains(ccmd.Proc.Name))
@@ -308,7 +291,7 @@ namespace cba.Util
 
                 foreach (IdentifierExpr v in ccmd.Proc.Modifies)
                 {
-                        ret.Add(v.Decl.Name);
+                    ret.Add(v.Decl.Name);
                 }
                 return ret;
             }
@@ -458,7 +441,7 @@ namespace cba.Util
                 p.Emit(tt);
                 writer.Flush();
                 st.Flush();
-                
+
                 writer.Seek(0, System.IO.SeekOrigin.Begin);
                 var s = ParserHelper.Fill(writer, new List<string>());
 
@@ -511,7 +494,7 @@ namespace cba.Util
                     {
                         ret.Add(v);
                         seen.Add(v.Name);
-                    } 
+                    }
                 }
             }
             return ret;
@@ -628,10 +611,10 @@ namespace cba.Util
         public static double GetMemUsage()
         {
             var p = System.Diagnostics.Process.GetCurrentProcess();
-            return p.VirtualMemorySize64 / (1024.0 * 1024.0); 
+            return p.VirtualMemorySize64 / (1024.0 * 1024.0);
         }
 
-        
+
         // is this a non-trivial assert? 
         public static bool isAssert(Cmd cmd)
         {
@@ -698,7 +681,7 @@ namespace cba.Util
         public static List<Declaration> newDecls = new List<Declaration>();
 
         static int uniqueInt = 0;
-        public static string uniqueLabel() 
+        public static string uniqueLabel()
         {
             return "L_BAF_" + (uniqueInt++);
         }
@@ -722,7 +705,7 @@ namespace cba.Util
 
             var res = new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "c", Microsoft.Boogie.Type.Bool), false);
             var ret = new Function(Token.NoToken, string.Format("Corral_bv_{0}_{1}", op, bits), args, res);
-            
+
             var aval = new List<object>();
             aval.Add(op);
             ret.Attributes = new QKeyValue(Token.NoToken, "bvbuiltin", aval, null);
@@ -736,7 +719,7 @@ namespace cba.Util
         // var := const
         public static AssignCmd MkVarEqConst(Variable v, int c)
         {
-            
+
             AssignLhs lhs = new SimpleAssignLhs(Token.NoToken, new IdentifierExpr(v.tok, v));
             Expr rhs = Expr.Literal(c);
             var temp1 = new List<AssignLhs>();
@@ -982,7 +965,7 @@ namespace cba.Util
         // assume (forall x:int :: map[x] == v)
         public static AssumeCmd MkMapConstant(Variable map, bool v)
         {
-            BoundVariable x = new BoundVariable(Token.NoToken, 
+            BoundVariable x = new BoundVariable(Token.NoToken,
                 new TypedIdent(Token.NoToken, "x", Microsoft.Boogie.Type.Int));
 
             List<Variable> vs = new List<Variable>();
@@ -1059,7 +1042,7 @@ namespace cba.Util
         // map[v] := rhs
         public static AssignCmd MkMapAssign(Variable map, Expr v, Expr rhs)
         {
-            AssignLhs alhs = new SimpleAssignLhs(Token.NoToken, 
+            AssignLhs alhs = new SimpleAssignLhs(Token.NoToken,
                 new IdentifierExpr(Token.NoToken, map));
 
             var indices = new List<Expr>();
@@ -1097,18 +1080,18 @@ namespace cba.Util
         public static Declaration MkProc(string name, List<Variable> ins, List<Variable> outs)
         {
             return new Procedure(
-                Token.NoToken, name, new List<TypeVariable>(), ins, outs, 
+                Token.NoToken, name, new List<TypeVariable>(), ins, outs,
                 new List<Requires>(), new List<IdentifierExpr>(), new List<Ensures>());
         }
-        public static Declaration MkProc(string name, 
+        public static Declaration MkProc(string name,
             IEnumerable<Variable> ins, IEnumerable<Variable> outs)
         {
-            return MkProc(name, 
+            return MkProc(name,
                 new List<Variable>(ins.ToArray()),
                 new List<Variable>(outs.ToArray()));
         }
 
-        public static List<Declaration> MkImpl(string name, List<Variable> ins, List<Variable> outs, 
+        public static List<Declaration> MkImpl(string name, List<Variable> ins, List<Variable> outs,
             List<Variable> locals, IEnumerable<Block> blocks)
         {
             var pr = MkProc(name, ins, outs);
@@ -1223,7 +1206,7 @@ namespace cba.Util
         public static Cmd MkCall(string proc, IEnumerable<Expr> args, IEnumerable<Variable> rets)
         {
             return new CallCmd(Token.NoToken, proc, new List<Expr>(args),
-                new List<Variable>(rets).Map<Variable,IdentifierExpr>(v => 
+                new List<Variable>(rets).Map<Variable, IdentifierExpr>(v =>
                     Expr.Ident(v.Name, v.TypedIdent.Type)),
                 null);
         }
@@ -1241,7 +1224,7 @@ namespace cba.Util
             else vs.Add("same");
 
             var attrs = new QKeyValue(Token.NoToken, "level", vs, null);
-            var ret = new CallCmd(Token.NoToken, proc, new List<Expr>(args), 
+            var ret = new CallCmd(Token.NoToken, proc, new List<Expr>(args),
                 new List<IdentifierExpr>(), attrs);
             ret.IsAsync = true;
 
@@ -1258,9 +1241,9 @@ namespace cba.Util
         public static Block MkBlock(IEnumerable<Cmd> cs, IEnumerable<String> tx)
         {
             return MkBlock(
-                new List<Cmd>(cs.ToArray()), 
+                new List<Cmd>(cs.ToArray()),
                 new GotoCmd(Token.NoToken, new List<String>(tx.ToArray())));
-        }        
+        }
         public static Block MkBlock(List<Cmd> cs)
         {
             return MkBlock(cs, new ReturnCmd(Token.NoToken));
@@ -1342,9 +1325,9 @@ namespace cba.Util
         {
             if (bs.Count() < 1 || cs.Count() < 1) return;
 
-            bs.Last().TransferCmd = 
-                new GotoCmd(Token.NoToken, 
-                    new List<String>(new String[]{cs.First().Label}));
+            bs.Last().TransferCmd =
+                new GotoCmd(Token.NoToken,
+                    new List<String>(new String[] { cs.First().Label }));
         }
 
         /**
@@ -1366,7 +1349,7 @@ namespace cba.Util
             var ls = new List<String>();
 
             var ds = new List<Block>();
-            foreach (var cs in css) 
+            foreach (var cs in css)
             {
                 var b = MkBlock(cs, new String[] { tail.Label });
                 ls.Add(b.Label);
@@ -1374,7 +1357,7 @@ namespace cba.Util
             }
 
             var head = MkBlock(new Cmd[] { }, ls);
-            
+
             var bs = new List<Block>();
             bs.Add(head);
             bs.AddRange(ds);
@@ -1453,7 +1436,7 @@ namespace cba.Util
             else if (expr is NAryExpr)
             {
                 NAryExpr nexpr = expr as NAryExpr;
-                for (int i=0;i<nexpr.Args.Count;i++)
+                for (int i = 0; i < nexpr.Args.Count; i++)
                 {
                     ret.AddRange(extractVars(nexpr.Args[i]));
                 }
@@ -1476,1291 +1459,4 @@ namespace cba.Util
         }
     }
 
-    public class NonnullInstrumentation
-    {
-        Program program;
-        public static Dictionary<string, Dictionary<string, Expr>> cseTmpVar2Expr = new Dictionary<string, Dictionary<string, Expr>>();
-
-        NonnullInstrumentation(Program prog)
-        {
-            program = prog;
-        }
-
-        public static Program Do(Program prog)
-        {
-            NonnullInstrumentation nni = new NonnullInstrumentation(prog);
-            nni.Instrument();
-            return nni.program;
-        }
-
-        // assert (expr != NULL); --> cseTmp := expr;
-        // assume (expr != NULL); --> cseTmp := expr;
-        private void Instrument()
-        {
-            // name -> implementation required for getVarsModified
-            HashSet<string> impl_names = new HashSet<string>();
-            program.TopLevelDeclarations.OfType<Implementation>().Iter(impl => impl_names.Add(impl.Name));
-
-            // FixedDuplicator to keep a copy of the old expressions in the dictionaries built in each implementation
-            FixedDuplicator dup = new FixedDuplicator();
-
-
-            foreach (Implementation impl in program.TopLevelDeclarations.OfType<Implementation>())
-            {
-                int counter = 0;
-                cseTmpVar2Expr.Add(impl.Name, new Dictionary<string, Expr>());
-
-                foreach (Block b in impl.Blocks)
-                {
-                    List<Cmd> newCmds = new List<Cmd>();
-
-                    foreach (Cmd c in b.Cmds)
-                    {
-                        newCmds.Add(c);
-
-                        if (c is AssertCmd)
-                        {
-                            var ac = c as AssertCmd;
-                            if (CleanAssert.validAssertCmd(ac))
-                            {
-                                LocalVariable lv = new LocalVariable(Token.NoToken, new TypedIdent(Token.NoToken, "cseTmp" + (counter++).ToString(), Microsoft.Boogie.Type.Int));
-                                impl.LocVars.Add(lv);
-
-                                Expr expr = CleanAssert.getExprFromAssertCmd(ac);
-                                cseTmpVar2Expr[impl.Name].Add(lv.Name, expr);
-                                AssignCmd asc = BoogieAstFactory.MkVarEqExpr(lv, expr);
-                                newCmds.Add(asc);
-                            }
-                        }
-                        else if (c is AssumeCmd)
-                        {
-                            var ac = c as AssumeCmd;
-                            if (CleanAssert.validAssumeCmd(ac))
-                            {
-                                LocalVariable lv = new LocalVariable(Token.NoToken, new TypedIdent(Token.NoToken, "cseTmp" + (counter++).ToString(), Microsoft.Boogie.Type.Int));
-                                impl.LocVars.Add(lv);
-
-                                Expr expr = CleanAssert.getExprFromAssumeCmd(ac);
-                                cseTmpVar2Expr[impl.Name].Add(lv.Name, expr);
-                                AssignCmd asc = BoogieAstFactory.MkVarEqExpr(lv, expr);
-                                newCmds.Add(asc);
-                            }
-                        }
-                    }
-
-                    b.Cmds = newCmds;
-                }
-            }
-        }
-    }
-
-    // Type of phi function encoding "x3 = phi(x1,x2)"
-    // Modeled: left as an uninterpreted function such that (x3 == x1 || x3 == x2)
-    // Verifiable: x3 := x2 and x3 := x1 pushed up towards the definitions of x2 and x1
-    // Passifiable: one after which assignments can be converted to assumes. This is
-    //              currently not implemented. It requires appropriate placement
-    //              of assignments for the phi function
-    public enum PhiFunctionEncoding { Verifiable, Modeled, Passifiable };
-
-    public class SSA
-    {
-        Program program;
-        PhiFunctionEncoding encoding;
-        List<Procedure> phiProcsDecl;
-        HashSet<string> typesToInstrument;
-        public static bool dbg = false;
-
-        private SSA(Program program, PhiFunctionEncoding encoding, HashSet<string> typesToInstrument)
-        {
-            this.program = program;
-            this.encoding = encoding;
-            this.phiProcsDecl = new List<Procedure>();
-            this.typesToInstrument = typesToInstrument;
-            if (encoding == PhiFunctionEncoding.Passifiable)
-                throw new NotImplementedException();
-        }
-
-
-        /*
-         * We go to every implementation, and look at assert (expr != NULL) and assume (expr != NULL)
-         * Now, we introduce a temporary variable and assignment cseTmp{i} := expr;
-         * Now, as long as this temporary variable is available, we replace expr by cseTmp{i}
-         * When the same expr is available from multiple vars from different predecessors, we introduce a new cseTmp{i} var := expr
-         * We now perform SSA, and then do the alias analysis
-         * This improves the precision of alias analysis, since these cseTmp vars are always non null, and hence, NULL cannot flow through these vars
-         */
-        
-
-        public static Program Compute(Program program, PhiFunctionEncoding encoding, HashSet<string> typesToInstrument)
-        {
-            var irreducible = new HashSet<string>();
-
-            var op = CommandLineOptions.Clo.ExtractLoopsUnrollIrreducible;
-            CommandLineOptions.Clo.ExtractLoopsUnrollIrreducible = false;
-
-            // Extract loops, we don't want cycles in the CFG            
-            program.ExtractLoops(out irreducible);
-            RemoveVarsFromAttributes.Prune(program);
-
-            if (GVN.doGVN)
-            {
-                // Non null instrumentation
-                program = NonnullInstrumentation.Do(program);
-
-                // Global Value Numbering
-                Stats.resume("gvn");
-                program = GVN.Do(program);
-                Stats.stop("gvn");
-
-                // Writing and reading back
-                Stats.resume("read.write");
-                program = BoogieUtil.ReResolve(program, false);
-                Stats.stop("read.write");
-            }
-
-            // Static Single Assignment
-            Stats.resume("ssa");
-            var ssa = new SSA(program,encoding, typesToInstrument);
-            ssa.Compute(irreducible);
-            Stats.stop("ssa");
-
-            CommandLineOptions.Clo.ExtractLoopsUnrollIrreducible = op;
-
-            return program;
-        }
-
-        private bool instrumentType(Microsoft.Boogie.Type type)
-        {
-            if (type.IsMap) return false;
-            if (typesToInstrument.Count == 0) return true;
-            return typesToInstrument.Contains(type.ToString());
-        }
-
-        private void Compute(HashSet<string> irreducible)
-        {
-            program.TopLevelDeclarations.OfType<Implementation>()
-                .Where(impl => !irreducible.Contains(impl.Name))
-                .Iter(SSARename);
-
-            program.AddTopLevelDeclarations(phiProcsDecl);
-        }
-
-        private void SSARename(Implementation impl)
-        {
-            // Make a unified exit block
-            
-            Block exitBlock = null;
-            if (impl.Blocks.Where(blk => blk.TransferCmd is ReturnCmd).Count() != 1)
-            {
-                exitBlock = new Block(Token.NoToken, "exit$block$ssa", new List<Cmd>(), new ReturnCmd(Token.NoToken));
-                foreach (var blk in impl.Blocks.Where(blk => blk.TransferCmd is ReturnCmd))
-                {
-                    blk.TransferCmd = new GotoCmd(Token.NoToken, new List<Block>{exitBlock});
-                }
-                impl.Blocks.Add(exitBlock);
-            } else {
-                exitBlock = impl.Blocks.Where(blk => blk.TransferCmd is ReturnCmd).First();
-            }
-
-            // Remove unreachble blocks
-            impl.PruneUnreachableBlocks();
-
-            // Live variable analysis
-            CbaLiveVariableAnalysis.ClearLiveVariables(impl);
-            CbaLiveVariableAnalysis.ComputeLiveVariables(impl, null);
-        
-            // create CFG graph
-            var graph = new Graph<Block>();
-
-            var labelToBlock = BoogieUtil.labelBlockMapping(impl);
-            foreach (var blk in impl.Blocks.Where(blk => blk.TransferCmd is GotoCmd))
-            {
-                var gc = blk.TransferCmd as GotoCmd;
-                gc.labelNames.OfType<string>().Iter(s => graph.AddEdge(blk, labelToBlock[s]));
-            }
-            graph.AddSource(impl.Blocks[0]);
-
-            /*
-            Console.WriteLine("------IDOM------");
-            foreach (var blk in impl.Blocks)
-            {
-                Console.WriteLine("{0}:", blk.Label);
-                foreach (var b in graph.ImmediatelyDominatedBy(blk))
-                    Console.WriteLine("    {0}", b.Label);
-
-            }
-
-            // Find out where phi functions are needed
-            var phiBlocks = new HashSet<Block>();
-            var DF = new Dictionary<Block, HashSet<Block>>();
-            var idom = new Dictionary<Block, Block>();
-
-            impl.Blocks.Iter(blk => DF.Add(blk, new HashSet<Block>()));
-            impl.Blocks.Iter(blk => graph.ImmediatelyDominatedBy(blk).Iter(blk2 => idom[blk2] = blk));
-
-            foreach (var blk in impl.Blocks)
-            {
-                if (graph.Predecessors(blk).Count() < 2)
-                    continue;
-                foreach (var pred in graph.Predecessors(blk))
-                {
-                    var runner = pred;
-                    while (runner != idom[blk])
-                    {
-                        DF[runner].Add(blk);
-                        runner = idom[runner];
-                    }
-                }
-            }
-
-            Console.WriteLine("------DF------");
-            foreach (var blk in impl.Blocks)
-            {
-                Console.WriteLine("{0}:", blk.Label);
-                foreach (var b in DF[blk])
-                    Console.WriteLine("    {0}", b.Label);
-            }
-
-            DF.Values.Iter(hs => phiBlocks.UnionWith(hs));
-            */
-
-            // Lets do reaching definitions on a DAG
-            var sortedBlockList = graph.TopologicalSort();
-            var variables = new HashSet<Variable>();
-            variables.UnionWith(impl.LocVars);
-            variables.UnionWith(impl.OutParams);
-            
-
-            variables = new HashSet<Variable>(variables.Where(v => instrumentType(v.TypedIdent.Type)));
-
-            // block -> variable -> version
-            var reachDefIn = new Dictionary<Block, Dictionary<Variable, int>>();
-            var reachDefOut = new Dictionary<Block, Dictionary<Variable, int>>();
-
-            // current max version
-            var maxVersion = new Dictionary<Variable, int>();
-            variables.OfType<LocalVariable>().Iter(v => maxVersion[v] = 0);
-            variables.OfType<Formal>().Iter(v => maxVersion[v] = 1);
-
-            // block -> Variable -> [out-version, in-versions]
-            var phiNodes = new Dictionary<Block, Dictionary<Variable, List<int>>>();
-            impl.Blocks.Iter(blk => phiNodes[blk] = new Dictionary<Variable, List<int>>());
-
-            var newVars = new Dictionary<string, LocalVariable>();
-
-            // Variable -> int -> Variable_int
-            var varInstances = new Func<Variable, int, Variable>((v, i) =>
-              {
-                  if (i == 0) return v;
-                  if (v is LocalVariable || v is Formal)
-                  {
-                      var ret = new LocalVariable(Token.NoToken, new TypedIdent(Token.NoToken, v.Name + "_ssa_" + i, v.TypedIdent.Type));
-                      if (!newVars.ContainsKey(ret.Name))
-                          newVars.Add(ret.Name, ret);
-                      return ret;
-                  }
-                  else
-                  {
-                      Debug.Assert(false);
-                      return null;
-                  }
-              }
-                );
-
-            foreach (var blk in sortedBlockList)
-            {
-                var lvars = HashSetExtras<Variable>.Intersection(new HashSet<Variable>(blk.liveVarsBefore), variables);
-
-                // compute reachDefIn
-                if (blk == impl.Blocks[0])
-                {
-                    // entry block
-                    reachDefIn[blk] = new Dictionary<Variable, int>();
-    
-                    lvars.OfType<LocalVariable>().Iter(v => reachDefIn[blk].Add(v, 0));
-                    lvars.OfType<Formal>().Iter(v => reachDefIn[blk].Add(v, 1));
-                }
-                else
-                {
-                    if (graph.Predecessors(blk).Count() == 0)
-                        // unreachable block
-                        Debug.Assert(false);
-
-                    reachDefIn[blk] = new Dictionary<Variable, int>();
-                    if (graph.Predecessors(blk).Count() == 1)
-                    {
-                        var pred = graph.Predecessors(blk).First();
-                        foreach (var v in lvars)
-                            reachDefIn[blk].Add(v, reachDefOut[pred][v]);
-                    }
-                    else
-                    {
-                        // union
-                        foreach (var v in lvars)
-                        {
-                            var versions = new HashSet<int>(graph.Predecessors(blk).Select(pred => reachDefOut[pred][v]));
-                            Debug.Assert(versions.Count() != 0);
-                            if (versions.Count() == 1)
-                            {
-                                reachDefIn[blk][v] = versions.First();
-                            }
-                            else
-                            {
-                                var max = maxVersion[v] + 1;
-                                maxVersion[v] = max;
-                                reachDefIn[blk][v] = max;
-                                // create phi node
-                                phiNodes[blk].Add(v, new List<int>());
-                                phiNodes[blk][v].Add(max);
-                                phiNodes[blk][v].AddRange(versions);
-                            }
-                        }
-                    }
-                }
-                
-                // Now that we have reachDefIn, compute reachDefOut
-                var defsOut = new Dictionary<Variable, int>(reachDefIn[blk]);
-
-                foreach (Cmd cmd in blk.Cmds)
-                {
-                    ProcessCmd(cmd, defsOut, maxVersion, varInstances, variables);
-                }
-                reachDefOut[blk] = defsOut;
-
-
-            }
-
-            // Assign formals to their last version in the exit block
-            foreach (var f in impl.OutParams)
-            {
-                if (!maxVersion.ContainsKey(f)) continue;
-                exitBlock.Cmds.Add(BoogieAstFactory.MkAssign(f, varInstances(f, maxVersion[f])));
-            }
-
-            // Implement phi nodes
-            ImplementPhiNodes(impl, phiNodes, varInstances);
-
-            // Add the new local variables
-            impl.LocVars.AddRange(newVars.Values);
-
-            // drop unnecessary information
-            CbaLiveVariableAnalysis.ClearLiveVariables(impl);
-        }
-
-        // phiNodes: block -> Variable -> (out-version :: [in-versions])
-        private void ImplementPhiNodes(Implementation impl, Dictionary<Block, Dictionary<Variable, List<int>>> phiNodes, Func<Variable, int, Variable> varInstances)
-        {
-            // Variable (inversion) -> Set of out-versions that it flows to
-            var assignments = new Dictionary<string, HashSet<string>>();
-            // string -> Variable
-            var nameToVar = new Dictionary<string, Variable>();
-
-            foreach (var tup in phiNodes)
-            {
-                var blk = tup.Key;
-                var dict = tup.Value;
-                if (dict == null || dict.Count() == 0)
-                    continue;
-
-                var ncmds = new List<Cmd>();
-                foreach (var vtup in dict)
-                {
-                    var v = vtup.Key;
-                    Debug.Assert(vtup.Value.Count() > 2);
-                    var outVersion = vtup.Value[0];
-                    var inVersions = new List<int>(vtup.Value);
-                    inVersions.RemoveAt(0);
-
-                    ncmds.Add(ImplementPhiNode(v, outVersion, inVersions, varInstances, assignments, nameToVar));
-                }
-
-                ncmds.AddRange(blk.Cmds);
-                blk.Cmds = ncmds;
-            }
-
-            if (encoding == PhiFunctionEncoding.Modeled)
-                return;
-
-            // For x_3 := phi(x_1, x_2), push "x_3 := x_1" and "x_3 := x_2" to the definitions of x_1 and x_2
-            foreach (var blk in impl.Blocks)
-            {
-                var ncmds = new List<Cmd>();
-                foreach (Cmd cmd in blk.Cmds)
-                {
-                    ncmds.Add(cmd);
-
-                    var defined = VarsDefined(cmd);
-                    foreach (var inV in defined)
-                    {
-                        if (!assignments.ContainsKey(inV))
-                            continue;
-                        foreach (var outV in assignments[inV])
-                            ncmds.Add(BoogieAstFactory.MkVarEqVar(nameToVar[outV], nameToVar[inV]));
-                    }
-                }
-                blk.Cmds = ncmds;
-            }
-
-            // Delete the calls to phiNode
-            foreach (var blk in impl.Blocks)
-            {
-                var isPhi = new Predicate<Cmd>(cmd =>
-                    {
-                        if (!(cmd is CallCmd)) return false;
-                        var ccmd = cmd as CallCmd;
-                        if (QKeyValue.FindBoolAttribute(ccmd.Attributes, "phi"))
-                            return true;
-                        return false;
-                    });
-
-                blk.Cmds = new List<Cmd>(blk.Cmds.OfType<Cmd>().Where(c => !isPhi(c)).ToArray());
-            }
-
-            phiProcsDecl.Clear();
-        }
-
-        // Return the set of variables assigned to by this cmd
-        private HashSet<string> VarsDefined(Cmd cmd)
-        {
-            var ret = new HashSet<string>();
-
-            if (cmd is AssignCmd)
-            {
-                var acmd = cmd as AssignCmd;
-                acmd.Lhss.Iter(lhs => ret.Add(lhs.DeepAssignedVariable.Name));
-                return ret;
-            }
-            else if (cmd is CallCmd)
-            {
-                var ccmd = cmd as CallCmd;
-                ccmd.Outs.Iter(ie => ret.Add(ie.Name));
-                return ret;
-            }
-            else
-            {
-                return new HashSet<string>();
-            }
-
-        }
-
-        private Cmd ImplementPhiNode(Variable v, int outVersion, List<int> inVersions, Func<Variable, int, Variable> varInstances, Dictionary<string, HashSet<string>> assignments, Dictionary<string, Variable> nameToVar)
-        {
-            var outV = varInstances(v, outVersion);
-            var inVersionVars = inVersions.Select(i => varInstances(v, i));
-
-            var attr = new QKeyValue(Token.NoToken, "phi", new List<object>(), null);
-
-            var inParams = inVersions.Select(i => new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "x_" + i, outV.TypedIdent.Type), true));
-            var outParam = new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "x_" + outVersion, outV.TypedIdent.Type), false);
-
-            var proc = new Procedure(Token.NoToken, "phiNode$" + phiProcsDecl.Count, new List<TypeVariable>(),
-                new List<Variable>(inParams.ToArray()), new List<Variable>(new Variable[] { outParam }), new List<Requires>(), new List<IdentifierExpr>(), new List<Ensures>());
-            phiProcsDecl.Add(proc);
-
-            Expr expr = Expr.False;
-            inParams.Iter(i => expr = Expr.Or(expr, Expr.Eq(Expr.Ident(outParam), Expr.Ident(i))));
-            proc.Ensures.Add(new Ensures(true, expr));
-
-            var callCmd = new CallCmd(Token.NoToken, proc.Name, new List<Expr>(inVersionVars.Select(x => Expr.Ident(x)).ToArray()), new List<IdentifierExpr>(new IdentifierExpr[] { Expr.Ident(outV) }));
-            callCmd.Proc = proc;
-            callCmd.Attributes = attr;
-
-            // fill the map assignments (inv -> outV)
-            foreach (var inV in inVersionVars)
-            {
-                if (!assignments.ContainsKey(inV.Name))
-                    assignments.Add(inV.Name, new HashSet<string>());
-                assignments[inV.Name].Add(outV.Name);
-
-                nameToVar[inV.Name] = inV;
-            }
-            nameToVar[outV.Name] = outV;
-
-            return callCmd;
-        }
-
-        private void ProcessCmd(Cmd cmd, Dictionary<Variable, int> defsIn, Dictionary<Variable, int> maxVersion, Func<Variable, int, Variable> varInstances, HashSet<Variable> toInstrument)
-        {
-            var renamer = new Func<Expr, Dictionary<Variable, int>, Expr>((e, d) =>
-                Substituter.Apply(new Substitution(v => 
-                {
-                    if(!d.ContainsKey(v)) return Expr.Ident(v);
-                    else return Expr.Ident(varInstances(v, d[v]));
-                }), e)
-                );
-
-            var defsOut = defsIn; // alias!
-
-            if (cmd is PredicateCmd)
-            {
-                // rename variables
-                (cmd as PredicateCmd).Expr = renamer((cmd as PredicateCmd).Expr, defsIn);
-            }
-            else if (cmd is HavocCmd)
-            {
-                var nhvars = new List<IdentifierExpr>();
-                foreach (var ie in (cmd as HavocCmd).Vars)
-                {
-                    var v = ie.Decl;
-                    if (toInstrument.Contains(v))
-                    {
-                        var max = maxVersion[v] + 1;
-                        maxVersion[v] = max;
-                        defsOut[v] = max;
-                        nhvars.Add(Expr.Ident(varInstances(v, max)));
-                    }
-                    else
-                    {
-                        nhvars.Add(ie);
-                    }
-
-                }
-                (cmd as HavocCmd).Vars = nhvars;
-            }
-            else if (cmd is AssignCmd)
-            {
-                var acmd = cmd as AssignCmd;
-
-                // Note: here we use the assumption that SSA is only done for scalar variables
-                // Hence, we only need to worry about SimpleAssignLhs
-                acmd.Rhss = new List<Expr>(acmd.Rhss.Select(e => renamer(e, defsIn)));
-                for (int i = 0; i < acmd.Lhss.Count; i++)
-                {
-                    var lhs = acmd.Lhss[i];
-                    if (lhs is MapAssignLhs)
-                    {
-                        var mlhs = lhs as MapAssignLhs;
-                        mlhs.Indexes = new List<Expr>(mlhs.Indexes.Select(e => renamer(e, defsIn)));
-                    }
-                }
-
-                for (int i = 0; i < acmd.Lhss.Count; i++) 
-                {
-                    var lhs = acmd.Lhss[i] as SimpleAssignLhs;
-                    if (lhs == null) continue;
-
-                    if (toInstrument.Contains(lhs.AssignedVariable.Decl))
-                    {
-                        var v = (lhs as SimpleAssignLhs).AssignedVariable.Decl;
-
-                        var max = maxVersion[v] + 1;
-                        maxVersion[v] = max;
-                        defsOut[v] = max;
-
-                        acmd.SetAssignCmdLhs(i, new SimpleAssignLhs(lhs.tok, Expr.Ident(varInstances(v, max))));
-                    }
-                }
-            }
-            else if (cmd is CallCmd)
-            {
-                var ccmd = cmd as CallCmd;
-                ccmd.Ins = new List<Expr>(ccmd.Ins.Select(e => renamer(e, defsIn)));
-
-                var outs = new List<IdentifierExpr>();
-                for(int i = 0; i < ccmd.Outs.Count; i++)
-                {
-                    var v = ccmd.Outs[i].Decl;
-                    if (toInstrument.Contains(v))
-                    {
-                        var max = maxVersion[v] + 1;
-                        maxVersion[v] = max;
-                        defsOut[v] = max;
-                        outs.Add(Expr.Ident(varInstances(v, max)));
-                    }
-                    else
-                    {
-                        outs.Add(Expr.Ident(v));
-                    }
-                }
-
-                ccmd.Outs = outs;
-            }
-            else
-            {
-                Debug.Assert(false);
-            }
-        }
-    }
-
-    public class GVN
-    {
-        Program program;
-        public static bool doGVN = true;
-
-        // Track the non-null exprs in each block
-        public static Dictionary<string, HashSet<Term>> non_null_exprs;
-
-        // operator -> (t1, t2) -> t3
-        public static Dictionary<string, Dictionary<Terms, Term>> hash_function;
-        
-        // default variable for a term cseTemp:= expr --> default_var(t_expr) = cseTmp
-        // block -> term -> cseTmp variable
-        public static Dictionary<string, Dictionary<Term, Variable>> default_var;
-
-        // block -> var -> term
-        public static Dictionary<string, Dictionary<string, Term>> hash_value;
-        
-        // current block
-        public static string currBlock;
-        public static bool dbg = false;
-        public static HashSet<string> impl_names = new HashSet<string>();
-
-        // Abstract representation of Expr
-        public class Term
-        {
-            int u_id;
-            static int VALUE = 0;
-
-            public Term(int u = 0)
-            {
-                u_id = u;
-            }
-
-            public Term()
-            {
-                u_id = VALUE++;
-            }
-
-            public static void resetVal()
-            {
-                VALUE = 0;
-            }
-
-            public override bool Equals(object obj)
-            {
-                if ((obj is Term) && (u_id == (obj as Term).u_id)) return true;
-                else return false;
-            }
-
-            public override int GetHashCode()
-            {
-                return u_id;
-            }
-            
-            public override string ToString()
-            {
-                return "Term_" + u_id.ToString();
-            }
-        }
-
-        // Abstract representation of arguments of NAryExpr
-        public class Terms
-        {
-            List<Term> args;
-
-            public Terms(List<Term> ts)
-            {
-                args = ts;
-            }
-
-            public Terms()
-            {
-                args = new List<Term>();
-            }
-
-            public override bool Equals(object obj)
-            {
-                if (obj is Terms)
-                {
-                    var ts = obj as Terms;
-                    if (args.Count == ts.args.Count)
-                    {
-                        for (int i = 0 ; i < args.Count ; i++)
-                        {
-                            if (!args[i].Equals(ts.args[i])) return false;
-                        }
-                        return true;
-                    }
-                    return false;
-                }
-                return false;
-            }
-
-            public override int GetHashCode()
-            {
-                int sum = 0;
-                foreach (Term t in args) sum += t.GetHashCode();
-                return sum;
-            }
-
-            public override string ToString()
-            {
-                string st;
-                st = "(";
-                foreach (Term t in args)
-                {
-                    st = st + t.ToString() + ", ";
-                }
-                st = st + ")";
-                return st;
-            }
-
-            public void Add(Term t)
-            {
-                args.Add(t);
-            }
-        }
-
-        // Perform substitution
-        private class GVNVisitor : StandardVisitor
-        {
-            Expr currExpr;
-
-            GVNVisitor()
-            {
-
-            }
-
-            public static Expr getExpr(Expr given_expr)
-            {
-                if (given_expr == null) return null;
-                var gvn = new GVNVisitor();
-                gvn.currExpr = gvn.VisitExpr(given_expr);
-                return gvn.currExpr;
-            }
-
-            // Compute hash value and perform subsitution if possible
-            public override Expr VisitExpr(Expr node)
-            {
-                Term t = ComputeHash(node);
-                if (non_null_exprs[currBlock].Contains(t)) return Expr.Ident(default_var[currBlock][t]);
-                else return base.VisitExpr(node);
-            }
-
-            // Compute hash value
-            // x -> hash_value[x];
-            // foo(y,z) -> hash_function[foo][{y,z}]
-            // y + z -> hash_function[+][{y,z}]
-            public static Term ComputeHash(Expr expr)
-            {
-                if (expr is IdentifierExpr)
-                {
-                    IdentifierExpr id = expr as IdentifierExpr;
-                    if (!hash_value[currBlock].ContainsKey(id.Decl.Name)) hash_value[currBlock].Add(id.Decl.Name, new Term());
-                    if (dbg) Console.WriteLine("{0} -> {1}", id.Decl.Name, hash_value[currBlock][id.Decl.Name].ToString());
-                    return hash_value[currBlock][id.Decl.Name];
-                }
-                else if (expr is NAryExpr)
-                {
-                    NAryExpr nexpr = expr as NAryExpr;
-                    string op = nexpr.Fun.FunctionName;
-                    if (!hash_function.ContainsKey(op)) hash_function.Add(op, new Dictionary<Terms, Term>());
-                    Terms t_args = new Terms();
-                    foreach (Expr arg in nexpr.Args)
-                    {
-                        Term t = ComputeHash(arg);
-                        t_args.Add(t);
-                    }
-                    if (!hash_function[op].ContainsKey(t_args)) hash_function[op].Add(t_args, new Term());
-
-                    if (dbg) Console.WriteLine("{2} => {0} -> {1}", t_args.ToString(), hash_function[op][t_args].ToString(), op);
-                    return hash_function[op][t_args];
-                }
-                else if (expr is LiteralExpr)
-                {
-                    LiteralExpr le = expr as LiteralExpr;
-                    if (!hash_value[currBlock].ContainsKey(le.Val.ToString())) hash_value[currBlock].Add(le.Val.ToString(), new Term());
-                    if (dbg) Console.WriteLine("{0} -> {1}", le.Val.ToString(), hash_value[currBlock][le.Val.ToString()].ToString());
-                    return hash_value[currBlock][le.Val.ToString()];
-                }
-                else if (expr is OldExpr)
-                {
-                    return new Term();
-                }
-                else if (expr is QuantifierExpr)
-                {
-                    return new Term();
-                }
-                else
-                {
-                    Debug.Assert(false);
-                    return new Term();
-                }
-            }
-        }
-
-        private GVN(Program program)
-        {
-            this.program = program;
-            non_null_exprs = new Dictionary<string, HashSet<Term>>();
-            hash_function = new Dictionary<string, Dictionary<Terms, Term>>();
-            default_var = new Dictionary<string, Dictionary<Term, Variable>>();
-            hash_value = new Dictionary<string, Dictionary<string, Term>>();
-        }
-
-        // Perform GVN
-        private void DoGVN()
-        {
-            program.TopLevelDeclarations.OfType<Implementation>().Iter(impl => impl_names.Add(impl.Name));
-
-
-            foreach (Implementation impl in program.TopLevelDeclarations.OfType<Implementation>())
-            {
-                IEnumerable<Block> sortedBlocks;
-                if (dbg) Console.WriteLine("Impl : {0} =>", impl.Name);
-                Term.resetVal();
-                int counter = 0;
-
-                // Computing predecessors, constructing CFG and topological sorting of blocks
-                impl.ComputePredecessorsForBlocks();
-                Graph<Block> dag = Microsoft.Boogie.Program.GraphFromImpl(impl);
-                sortedBlocks = dag.TopologicalSort();
-
-                non_null_exprs.Clear();
-                hash_function.Clear();
-                default_var.Clear();
-                hash_value.Clear();
-
-                foreach (Block blk in sortedBlocks)
-                {
-                    // nonnull terms available from all predecessors
-                    Dictionary<Term, int> nonnull_pred_count = new Dictionary<Term, int>();
-                    // terms available from all predecessors
-                    Dictionary<string, Tuple<int, Term>> var_pred_count = new Dictionary<string, Tuple<int, Term>>();
-
-                    // initializations for the current block
-                    non_null_exprs.Add(blk.Label, new HashSet<Term>());
-                    hash_value.Add(blk.Label, new Dictionary<string, Term>());
-                    default_var.Add(blk.Label, new Dictionary<Term, Variable>());
-
-                    if (dbg) Console.WriteLine("Block : {0}", blk.Label);
-
-                    // expr available from all predecessors
-                    foreach (Block b in blk.Predecessors)
-                    {
-                        foreach (Term t in non_null_exprs[b.Label])
-                        {
-                            if (!nonnull_pred_count.ContainsKey(t)) nonnull_pred_count.Add(t, 0);
-                            nonnull_pred_count[t]++;
-                        }
-
-                        // if same variable available from multiple predecessors via different terms, add a new term for variable
-                        // else carry over the same term
-                        foreach (string var in hash_value[b.Label].Keys)
-                        {
-                            if (!var_pred_count.ContainsKey(var))
-                            {
-                                var_pred_count[var] = new Tuple<int, Term>(1, hash_value[b.Label][var]);
-                            }
-                            else if (var_pred_count.ContainsKey(var) && var_pred_count[var].Item2 == null)
-                            {
-                                var_pred_count[var] = new Tuple<int, Term>(var_pred_count[var].Item1 + 1, null);
-                            }
-                            else if (var_pred_count.ContainsKey(var) && !var_pred_count[var].Item2.Equals(hash_value[b.Label][var]))
-                            {
-                                var_pred_count[var] = new Tuple<int, Term>(var_pred_count[var].Item1 + 1, null);
-                            }
-                            else
-                            {
-                                var_pred_count[var] = new Tuple<int, Term>(var_pred_count[var].Item1 + 1, var_pred_count[var].Item2);
-                            }
-                        }
-                    }
-                    currBlock = blk.Label;
-
-                    foreach (Term t in nonnull_pred_count.Keys)
-                    {
-                        if (nonnull_pred_count[t] == blk.Predecessors.Count) non_null_exprs[blk.Label].Add(t);
-                    }
-
-                    // bool denotes multiple occurences
-                    Dictionary<Term, Tuple<Variable, bool>> default_var_preds = new Dictionary<Term, Tuple<Variable, bool>>();
-
-                    foreach (Term t in non_null_exprs[blk.Label])
-                    {
-                        foreach (Block b in blk.Predecessors)
-                        {
-                            if (!default_var_preds.ContainsKey(t))
-                            {
-                                default_var_preds.Add(t, new Tuple<Variable, bool>(default_var[b.Label][t], false));
-                            }
-                            else if (default_var_preds[t] != null)
-                            {
-                                if (!default_var[b.Label][t].Name.Equals(default_var_preds[t].Item1.Name))
-                                {
-                                    default_var_preds[t] = new Tuple<Variable, bool>(default_var_preds[t].Item1, true);
-                                }
-                            }
-                        }
-                    }
-
-                    List<Cmd> newCmds = new List<Cmd>();
-
-                    foreach (Term t in default_var_preds.Keys)
-                    {
-                        if (default_var_preds[t].Item2 == false)
-                        {
-                            default_var[blk.Label].Add(t, default_var_preds[t].Item1);
-                        }
-                        else
-                        {
-                            LocalVariable lv = new LocalVariable(Token.NoToken, new TypedIdent(Token.NoToken, "cseTmpGVN" + (counter++).ToString(), Microsoft.Boogie.Type.Int));
-                            impl.LocVars.Add(lv);
-                            default_var[blk.Label].Add(t, lv);
-
-                            AssignCmd asc = BoogieAstFactory.MkVarEqExpr(lv, NonnullInstrumentation.cseTmpVar2Expr[impl.Name][default_var_preds[t].Item1.Name]);
-                            NonnullInstrumentation.cseTmpVar2Expr[impl.Name].Add(lv.Name, NonnullInstrumentation.cseTmpVar2Expr[impl.Name][default_var_preds[t].Item1.Name]);
-
-                            newCmds.Add(asc);
-                        }
-                    }
-
-                    foreach (string var in var_pred_count.Keys)
-                    {
-                        if (var_pred_count[var].Item1 == blk.Predecessors.Count)
-                        {
-                            // carrying over same term
-                            if (var_pred_count[var].Item2 != null)
-                                hash_value[blk.Label].Add(var, var_pred_count[var].Item2);
-                            // introducing a new term
-                            else
-                                hash_value[blk.Label].Add(var, new Term());
-                        }
-                    }
-
-                    if (dbg)
-                    {
-                        Console.WriteLine("HASH VALUES");
-                        hash_value[blk.Label].Keys.Iter(k => Console.WriteLine("{0} -> {1}", k, hash_value[blk.Label][k]));
-                    }
-
-                    // ProcessCmd
-                    foreach (Cmd cmd in blk.Cmds)
-                    {
-                        if (dbg) Console.WriteLine(cmd.ToString());
-                        Cmd cmd_out = ProcessCmd(cmd);
-                        if (dbg) Console.WriteLine(cmd_out.ToString());
-                        newCmds.Add(cmd_out);
-
-                        if (cmd is AssignCmd)
-                        {
-                            var acmd = cmd as AssignCmd;
-                            if (CleanAssert.validAssignCmd(acmd))
-                            {
-                                Term t = GVNVisitor.ComputeHash(acmd.Rhss[0]);
-                                non_null_exprs[blk.Label].Add(t);
-                                if (!default_var[blk.Label].ContainsKey(t)) default_var[blk.Label].Add(t, (acmd.Lhss[0] as SimpleAssignLhs).DeepAssignedVariable);
-                                if (dbg) Console.WriteLine("Non-NULL {0} -> {1}", acmd.Rhss[0], t.ToString());
-                            }
-                        }
-                    }
-                    blk.Cmds = newCmds;
-                }
-            }
-        }
-
-        // Find expr and perform substitution
-        private Cmd ProcessCmd(Cmd c)
-        {
-            if (c is AssumeCmd)
-            {
-                var ac = c as AssumeCmd;
-                ac.Expr = GVNVisitor.getExpr(ac.Expr);
-                return c;
-            }
-            else if (c is AssertCmd)
-            {
-                var ac = c as AssertCmd;
-                ac.Expr = GVNVisitor.getExpr(ac.Expr);
-                return c;
-            }
-            else if (c is CallCmd)
-            {
-                var cc = c as CallCmd;
-
-                for (int i = 0; i < cc.Ins.Count; i++)
-                {
-                    Expr rhs = cc.Ins[i];
-                    cc.Ins[i] = GVNVisitor.getExpr(rhs);
-                }
-
-                HashSet<string> vars_modified = BoogieUtil.getVarsModified(c, impl_names);
-                foreach (string s in vars_modified)
-                {
-                    if (!hash_value[currBlock].ContainsKey(s)) hash_value[currBlock].Add(s, new Term(-1));
-                    hash_value[currBlock][s] = new Term();
-                    if (dbg) Console.WriteLine("{0} -> {1}", s, hash_value[currBlock][s]);
-                }
-                return c;
-            }
-            else if (c is AssignCmd)
-            {
-                var ac = c as AssignCmd;
-                for (int i = 0; i < ac.Rhss.Count; i++)
-                {
-                    Expr rhs = ac.Rhss[i];
-                    ac.SetAssignCmdRhs(i, GVNVisitor.getExpr(rhs));
-                    AssignLhs lhs = ac.Lhss[i];
-                    if (lhs is SimpleAssignLhs)
-                    {
-                        var slhs = lhs as SimpleAssignLhs;
-                        if (!hash_value[currBlock].ContainsKey(slhs.DeepAssignedVariable.Name)) hash_value[currBlock].Add(slhs.DeepAssignedVariable.Name, new Term(-1));
-                        hash_value[currBlock][slhs.DeepAssignedVariable.Name] = GVNVisitor.ComputeHash(rhs);
-                        if (dbg) Console.WriteLine("{0} -> {1}", slhs.DeepAssignedVariable.Name, hash_value[currBlock][slhs.DeepAssignedVariable.Name]);
-                    }
-                    else if (lhs is MapAssignLhs)
-                    {
-                        HashSet<string> vars_modified = BoogieUtil.getVarsModified(c, impl_names);
-                        foreach (string s in vars_modified)
-                        {
-                            if (!hash_value[currBlock].ContainsKey(s)) hash_value[currBlock].Add(s, new Term(-1));
-                            hash_value[currBlock][s] = new Term();
-                            if (dbg) Console.WriteLine("{0} -> {1}", s, hash_value[currBlock][s]);
-                        }
-
-                        var mlhs = lhs as MapAssignLhs;
-                        List<Expr> newlhs = new List<Expr>();
-                        foreach (Expr expr in mlhs.Indexes)
-                        {
-                            Expr newExpr = GVNVisitor.getExpr(expr);
-                            newlhs.Add(newExpr);
-                        }
-                        mlhs.Indexes = newlhs;
-                    }
-                }
-                return c;
-            }
-            else
-            {
-                Debug.Assert(false);
-                return c;
-            }
-        }
-
-        public static Program Do(Program program)
-        {
-            GVN gvn = new GVN(program);
-            gvn.DoGVN();
-            return gvn.program;
-        }
-
-    }
-
-    public class CleanAssert
-    {
-        // Check if an expression is NULL expression
-        public static bool checkIfNull(Expr expr)
-        {
-            if (expr is IdentifierExpr)
-            {
-                return (expr as IdentifierExpr).ToString().Equals("NULL");
-            }
-            return false;
-        }
-
-        private static bool checkIfNot(IAppliable fun)
-        {
-            if (fun is UnaryOperator &&
-                (fun as UnaryOperator).Op == UnaryOperator.Opcode.Not)
-                return true;
-            else return false;
-        }
-
-        private static bool checkIfAliasingQuery(IAppliable fun)
-        {
-            if (fun is FunctionCall &&
-                BoogieUtil.checkAttrExists("aliasingQuery", (fun as FunctionCall).Func.Attributes))
-                return true;
-            else return false;
-        }
-
-        // Check if assert cmd is assert !aliasQnull(var, NULL) or assert !aliasQnull(M[x], NULL)
-        public static bool validAssertCmd(AssertCmd ac)
-        {
-            if (ac.Expr.ToString() == Expr.True.ToString() ||
-                            ac.Expr.ToString() == null) return false;
-            if (ac.Expr != null &&
-                ac.Expr is NAryExpr &&
-                checkIfNot(((NAryExpr)ac.Expr).Fun) &&
-                ((NAryExpr)ac.Expr).Args != null &&
-                (((NAryExpr)ac.Expr).Args).First() is NAryExpr &&
-                checkIfAliasingQuery(((NAryExpr)((NAryExpr)ac.Expr).Args[0]).Fun) &&
-                ((NAryExpr)(((NAryExpr)ac.Expr).Args).First()).Args != null &&
-                ((NAryExpr)((NAryExpr)ac.Expr).Args[0]).Args.Count >= 2 &&
-                checkIfNull(((NAryExpr)((NAryExpr)ac.Expr).Args[0]).Args[1]))
-                return true;
-            else return false;
-        }
-
-        // Check if AssertCmd is assert !aliasQnull(var, NULL)
-        public static bool validAssert(AssertCmd ac)
-        {
-            if (ac.Expr.ToString() == Expr.True.ToString() ||
-                            ac.Expr.ToString() == null) return false;
-            if (ac.Expr != null &&
-                ac.Expr is NAryExpr &&
-                ((NAryExpr)ac.Expr).Args != null &&
-                (((NAryExpr)ac.Expr).Args).First() is NAryExpr &&
-                ((NAryExpr)(((NAryExpr)ac.Expr).Args).First()).Args != null)
-                return true;
-            else return false;
-        }
-
-        public static bool validAssignCmd(AssignCmd ac)
-        {
-            if (ac.Lhss.Count == 1 && ac.Lhss[0] is SimpleAssignLhs && (ac.Lhss[0] as SimpleAssignLhs).DeepAssignedVariable.Name.StartsWith("cseTmp")) return true;
-            else return false;
-        }
-
-        // Extracting variable name from AssertCmd
-        public static IdentifierExpr getVarFromAssert(AssertCmd ac)
-        {
-            return ((NAryExpr)(((NAryExpr)ac.Expr).Args).First()).Args.OfType<IdentifierExpr>().First();
-        }
-
-        // Get expression from assert cmd, assert (expr != NULL)
-        public static Expr getExprFromAssert(AssertCmd ac)
-        {
-            return ((NAryExpr)(((NAryExpr)ac.Expr).Args).First()).Args.First();
-        }
-
-        // Get "NULL" from assertion
-        public static string getNULLFromAssert(AssertCmd ac)
-        {
-            return ((NAryExpr)(((NAryExpr)ac.Expr).Args).First()).Args[1].ToString();
-        }
-
-        // Get expression from assume cmd, assume (expr != NULL)
-        public static Expr getExprFromAssume(AssumeCmd ac)
-        {
-            return (((NAryExpr)ac.Expr).Args.First());
-        }
-
-        // Get "NULL" from assume cmd
-        public static string getNULLFromAssume(AssumeCmd ac)
-        {
-            return (((NAryExpr)ac.Expr).Args[1]).ToString();
-        }
-
-        public static string getQueryFromAssert(AssertCmd ac)
-        {
-            return ((NAryExpr)(((NAryExpr)ac.Expr).Args).First()).Fun.FunctionName;
-        }
-
-        // Check if AssumeCmd is assume (var != NULL)
-        public static bool validAssume(AssumeCmd asc)
-        {
-            if (asc.Expr is NAryExpr)
-            {
-                NAryExpr asc_expr = (NAryExpr)asc.Expr;
-                if (asc_expr.Fun != null &&
-                    asc_expr.Fun is BinaryOperator &&
-                    ((BinaryOperator)asc_expr.Fun).Op == BinaryOperator.Opcode.Neq &&
-                    asc_expr.Args.Count == 2 &&
-                    asc_expr.Args[0] is IdentifierExpr &&
-                    asc_expr.Args[1] is IdentifierExpr &&
-                    checkIfNull(asc_expr.Args[1])) return true;
-                else return false;
-            }
-            else return false;
-        }
-
-
-        // Check if assume cmd is assume (M[expr] != NULL) or assume (var != NULL)
-        public static bool validAssumeCmd(AssumeCmd asc)
-        {
-            if (asc.Expr is NAryExpr)
-            {
-                NAryExpr asc_expr = (NAryExpr)asc.Expr;
-                if (asc_expr.Fun != null &&
-                    asc_expr.Fun is BinaryOperator &&
-                    ((BinaryOperator)asc_expr.Fun).Op == BinaryOperator.Opcode.Neq &&
-                    asc_expr.Args.Count == 2 &&
-                    ((asc_expr.Args[0] is IdentifierExpr) || (asc_expr.Args[0] is NAryExpr &&
-                    (asc_expr.Args[0] as NAryExpr).Fun is MapSelect)) &&
-                    asc_expr.Args[1] is IdentifierExpr &&
-                    checkIfNull(asc_expr.Args[1])) return true;
-                else return false;
-            }
-            else return false;
-        }
-
-        // Check if AssumeCmd is assume (M[x] != NULL)
-        public static bool validMapAssume(AssumeCmd asc)
-        {
-            if (asc.Expr is NAryExpr)
-            {
-                NAryExpr asc_expr = (NAryExpr)asc.Expr;
-                if (asc_expr.Fun != null &&
-                    asc_expr.Fun is BinaryOperator &&
-                    ((BinaryOperator)asc_expr.Fun).Op == BinaryOperator.Opcode.Neq &&
-                    asc_expr.Args.Count == 2 &&
-                    asc_expr.Args[0] is NAryExpr &&
-                    (asc_expr.Args[0] as NAryExpr).Fun is MapSelect &&
-                    asc_expr.Args[1] is IdentifierExpr &&
-                    checkIfNull(asc_expr.Args[1])) return true;
-                else return false;
-            }
-            else return false;
-        }
-
-        // Extract variable name from AssumeCmd
-        public static IdentifierExpr getVarFromAssume(AssumeCmd asc)
-        {
-            return (IdentifierExpr)(((NAryExpr)asc.Expr).Args.OfType<IdentifierExpr>().First());
-        }
-
-        // Returns true if ac.Expr is !(expr == NULL)
-        public static bool isNullAssertCmd(AssertCmd ac)
-        {
-            if (ac.Expr.ToString() == Expr.True.ToString() ||
-                            ac.Expr.ToString() == null) return false;
-
-            if (ac.Expr != null &&
-                ac.Expr is NAryExpr &&
-                checkIfNot((ac.Expr as NAryExpr).Fun))
-            {
-                Expr expr = (ac.Expr as NAryExpr).Args[0];
-                if (expr is NAryExpr)
-                {
-                    var nexpr = expr as NAryExpr;
-                    if (nexpr.Fun is BinaryOperator &&
-                        (nexpr.Fun as BinaryOperator).Op == BinaryOperator.Opcode.Eq &&
-                        checkIfNull(nexpr.Args[1])) 
-                            return true;
-                }
-            }
-            return false;
-        }
-
-        public static Expr getExprFromAssertCmd(AssertCmd ac)
-        {
-            var expr = (ac.Expr as NAryExpr).Args[0];
-            return (expr as NAryExpr).Args[0];
-        }
-
-        public static string getNULLFromAssertCmd(AssertCmd ac)
-        {
-            var expr = (ac.Expr as NAryExpr).Args[0];
-            return (expr as NAryExpr).Args[1].ToString();
-        }
-
-        // Returns true if ac.Expr is (expr != NULL)
-        public static bool isNullAssumeCmd(AssumeCmd ac)
-        {
-            if (ac.Expr.ToString() == Expr.True.ToString() ||
-                            ac.Expr.ToString() == null) return false;
-
-            if (ac.Expr != null &&
-                ac.Expr is NAryExpr)
-            {
-                var expr = ac.Expr as NAryExpr;
-                if (expr.Fun is BinaryOperator &&
-                    (expr.Fun as BinaryOperator).Op == BinaryOperator.Opcode.Neq &&
-                    checkIfNull(expr.Args[1])) 
-                        return true;
-            }
-            return false;
-        }
-
-        public static Expr getExprFromAssumeCmd(AssumeCmd ac)
-        {
-            return (ac.Expr as NAryExpr).Args[0];
-        }
-
-        public static string getNULLFromAssumeCmd(AssumeCmd ac)
-        {
-            return (ac.Expr as NAryExpr).Args[1].ToString();
-        }
-    }
 }

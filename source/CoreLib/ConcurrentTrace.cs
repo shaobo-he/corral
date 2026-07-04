@@ -9,7 +9,7 @@ using System.IO;
 
 namespace cba
 {
-    public enum TraceFormat {  ConcurrencyExplorer };
+    public enum TraceFormat { ConcurrencyExplorer };
 
     // For printing a program and a  concurrent  path in it. The output can be pulled in by
     // concurrency explorer.
@@ -70,7 +70,7 @@ namespace cba
                 ev.printEvent();
             }
 
-            if(pathFile != null) pathFile.Close();
+            if (pathFile != null) pathFile.Close();
         }
 
         // Print an interleaved trace, using the execution context information present
@@ -192,7 +192,7 @@ namespace cba
             ret.Add(block);
 
             curr = new List<Cmd>();
-            
+
             // Now for the rest of the cmds
             while (cnt < origCmds.Count)
             {
@@ -235,10 +235,10 @@ namespace cba
                         nseq.Add(cmd);
                     }
 
-                    if(hasInfo)
+                    if (hasInfo)
                     {
                         var key = new Duple<string, string>(implementation.Name, blk.Label);
-                        var value = new Tuple<string, string, string>(file, line.ToString(), col.ToString()); 
+                        var value = new Tuple<string, string, string>(file, line.ToString(), col.ToString());
                         mapCTrace.Add(key, value);
                         if (printData == 2)
                         {
@@ -285,7 +285,7 @@ namespace cba
                     line = ((Microsoft.BaseTypes.BigNum)(tt.Val)).ToInt;
                 tt = attr[2] as LiteralExpr;
                 if (tt != null && (tt.Val is Microsoft.BaseTypes.BigNum))
-                    column = ((Microsoft.BaseTypes.BigNum)(tt.Val)).ToInt;                
+                    column = ((Microsoft.BaseTypes.BigNum)(tt.Val)).ToInt;
 
             }
             else
@@ -297,7 +297,7 @@ namespace cba
             }
 
             if (file == null || line == -1)
-                return false;            
+                return false;
 
             if (acmd.Expr is LiteralExpr && (acmd.Expr as LiteralExpr).IsTrue)
                 keepCmd = false;
@@ -343,7 +343,7 @@ namespace cba
                 if (filename != null && filename != "")
                 {
                     //var str = string.Format("{0}({1},{2}):  Thread={3}  K={4}:  {5}", filename, ev.lineno, 1, ev.tid, ev.k, ev.extra);
-                    var str = string.Format("{0}({1},{2}): Trace: Thread={3}  ({4})", filename, ev.lineno, ev.col == -1? 1 : ev.col, ev.tid, extra);
+                    var str = string.Format("{0}({1},{2}): Trace: Thread={3}  ({4})", filename, ev.lineno, ev.col == -1 ? 1 : ev.col, ev.tid, extra);
                     if (str != prev)
                     {
                         Console.WriteLine(str);
@@ -359,7 +359,7 @@ namespace cba
         {
             // Set output files
             pathFile = file == null ? null : new TokenTextWriter(file + "_trace.txt");
-            if(pathFile != null) program.writeToFile(file + ".bpl");
+            if (pathFile != null) program.writeToFile(file + ".bpl");
             Program prog = program.getProgram();
 
             // Initialization
@@ -372,7 +372,7 @@ namespace cba
                     pathFile.WriteLine("s");
                     pathFile.WriteLine("#");
                 }
-                else {} 
+                else { }
 
             }
         }
@@ -461,11 +461,11 @@ namespace cba
                     {
                         assertFails += tcmd.info.ToString();
                     }
-                   
+
                     if (tcmd.isCall())
                     {
                         Debug.Assert(pblk.Cmds[pcnt] is CallCmd);
-                        
+
                         CallInstr cc = tcmd as CallInstr;
                         string callstr = string.Format("{0} {1}", cc.asyncCall ? "FORK" : "CALL", (pblk.Cmds[pcnt] as CallCmd).Proc.Name);
                         if (!cc.hasCalledTrace)
@@ -619,13 +619,13 @@ namespace cba
 
                 if (pathFile != null)
                 {
-                        pathFile.Write(getString(eid, extra));
+                    pathFile.Write(getString(eid, extra));
                 }
             }
 
             private void printToFile(string str)
             {
-                if(pathFile != null) pathFile.Write(str);
+                if (pathFile != null) pathFile.Write(str);
             }
 
             private string getString(int eid, string extra)
@@ -943,7 +943,7 @@ namespace cba
 
         private static int getLineNo(int tid)
         {
-            int a,c;
+            int a, c;
             string b;
             getLineAndFile(tid, out a, out c, out b);
             return a;
@@ -951,7 +951,7 @@ namespace cba
 
         private static int getColNo(int tid)
         {
-            int a,c;
+            int a, c;
             string b;
             getLineAndFile(tid, out a, out c, out b);
             return c;
@@ -959,7 +959,7 @@ namespace cba
 
         private static string getFileName(int tid)
         {
-            int a,c;
+            int a, c;
             string b;
             getLineAndFile(tid, out a, out c, out b);
             return b;

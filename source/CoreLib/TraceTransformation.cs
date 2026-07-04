@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -28,64 +28,6 @@ namespace cba
             this.callee = null;
         }
     }
-
-    /*
-    // A generic interface to a class that stores how program transformation
-    // was carried out
-    public abstract class ProgramTrans
-    {
-        // A map from src Cmd to dest Cmds
-        protected Dictionary<Cmd, List<Cmd>> srcDestMap;
-
-        // The set of all Cmds in Dest
-        HashSet<Cmd> allDestCmds;
-
-        // A duplicator for making copies of Cmds
-        FixedDuplicator dup;
-
-        // Have all the transformations been processed -- can only be done once
-        bool processed;
-
-        public ProgramTrans()
-        {
-            srcDestMap = new Dictionary<Cmd, List<Cmd>>();
-            allDestCmds = new HashSet<Cmd>();
-            dup = new FixedDuplicator(true);
-            processed = false;
-        }
-
-        // Store a program transformation. It makes sure that
-        // all Cmd in dest are unaliased to anything before
-        // inserted into the destination program
-        public void addTrans(Cmd src, ref List<Cmd> dest)
-        {
-            // Make dest unaliased
-            for (int i = 0; i < dest.Length; i++)
-            {
-                if (allDestCmds.Contains(dest[i]))
-                {
-                    dest[i] = dup.Visit(dest[i]);
-                }
-            }
-
-            Debug.Assert(!srcDestMap.ContainsKey(src));
-
-            srcDestMap.Add(src, dest);
-        }
-
-        public ErrorTrace reverseTrans(ErrorTrace trace)
-        {
-            Debug.Assert(processed);
-            return mapBackTrace(trace);
-        }
-
-        abstract public ErrorTrace mapBackTrace(ErrorTrace trace);
-
-        // Does some pre-processing, given the final dest program
-        // This procedure should set "processed" to true.
-        abstract public void processAllTrans(Program dest);
-    }
-    */
 
     // This class is used to store information as to how a program
     // was transformed. It essentially stores a map:
@@ -206,7 +148,7 @@ namespace cba
             var ret = new ErrorTraceBlock(tblock.blockName);
             ret.info = tblock.info;
 
-            for(int i=0;i<tblock.Cmds.Count;i++)
+            for (int i = 0; i < tblock.Cmds.Count; i++)
             {
                 var tp = new InstrType();
                 if (tblock.Cmds[i] is CallInstr)
@@ -221,13 +163,13 @@ namespace cba
                         tp = new InstrType(InstrTypeEnum.CALL, ci.callee);
                     }
                 }
-                
+
                 var it = new InstrTrans(tp);
                 ret.addInstr(it.mapBackTrace(tblock.Cmds, i, tinfo));
             }
 
             return ret;
-            
+
         }
 
         // map back "trace" through this transformation. tinfo is the parent
@@ -256,9 +198,9 @@ namespace cba
                 if (inst == null) break;
 
                 ret.addInstr(inst);
-                
+
                 // Are we done?
-                if(inst is CallInstr && (inst as CallInstr).calleeTrace != null && (
+                if (inst is CallInstr && (inst as CallInstr).calleeTrace != null && (
                     !(inst as CallInstr).calleeTrace.returns || (
                        (inst as CallInstr).calleeTrace.raisesException && !(inst as CallInstr).asyncCall
                     )
@@ -317,7 +259,7 @@ namespace cba
             correspondingInstr = 0;
         }
 
-        private void initialize(Cmd _from, List<Cmd> _to, int ci) 
+        private void initialize(Cmd _from, List<Cmd> _to, int ci)
         {
             to = new List<InstrType>();
             correspondingInstr = ci;
@@ -691,7 +633,7 @@ namespace cba
                     }
 
                     curr = new ErrorTraceBlock(toFromBlockMap[blk.blockName]);
-                    if(blk.info != null) curr.info = blk.info.Copy();
+                    if (blk.info != null) curr.info = blk.info.Copy();
                 }
 
                 for (int i = 0; i < blk.Cmds.Count; i++)
@@ -765,7 +707,7 @@ namespace cba
             }
 
         }
-        
+
     }
 
     public class InstrLocation
@@ -813,8 +755,8 @@ namespace cba
 
         public void print(TokenTextWriter ttw)
         {
-            ttw.Write(blockName + ":" + num.ToString() + 
-                (type.type == InstrTypeEnum.CALL 
+            ttw.Write(blockName + ":" + num.ToString() +
+                (type.type == InstrTypeEnum.CALL
                 ? ":call" :
                 (type.type == InstrTypeEnum.ASYNC
                 ? ":async" :

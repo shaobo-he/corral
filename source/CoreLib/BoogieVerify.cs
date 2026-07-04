@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -144,11 +144,6 @@ namespace cba.Util
                 program = BoogieUtil.ReadAndResolve("last_query.bpl");
             }
 
-            if (options.printProg)
-            {
-                Debug.Assert(options.progFileName != null, "Invalid options");
-                BoogieUtil.PrintProgram(program, options.progFileName);
-            }
             #endregion
 
             var origBlocks = new Dictionary<string, Tuple<Block, Implementation>>();
@@ -333,7 +328,7 @@ namespace cba.Util
             parentTree[root] = parent;
 
             color[root] = 1;
-            
+
             var succs = Succ(root);
             foreach (var s in succs)
                 DFS(s, root, Succ, color, parentTree, cycle);
@@ -349,7 +344,7 @@ namespace cba.Util
         // Rename basic blocks, local variables
         // Add "havoc locals" at the beginning
         // block return
-        private static void RenameImpl(Implementation impl, Dictionary<string, Tuple<Block,Implementation>> origProg)
+        private static void RenameImpl(Implementation impl, Dictionary<string, Tuple<Block, Implementation>> origProg)
         {
             var origImpl = (new FixedDuplicator(true)).VisitImplementation(impl);
             var origBlocks = BoogieUtil.labelBlockMapping(origImpl);
@@ -481,11 +476,6 @@ namespace cba.Util
 
             RemoveAsserts(program);
 
-            if (options.printProg)
-            {
-                BoogieUtil.PrintProgram(program, options.progFileName);
-            }
-
             //// ---------- Verify ----------------------------------------------------------------
             Debug.Assert(CommandLineOptions.Clo.StratifiedInlining > 0);
 
@@ -575,89 +565,10 @@ namespace cba.Util
 
             foreach (var s in options.CallTree)
             {
-                var tokens = s.Split(new string[] {"_131_"}, StringSplitOptions.RemoveEmptyEntries);
+                var tokens = s.Split(new string[] { "_131_" }, StringSplitOptions.RemoveEmptyEntries);
                 if (tokens.Length < 2) continue;
                 ret.Add(tokens[tokens.Length - 2]);
             }
-            return ret;
-        }
-
-        public static Counterexample ReconstructTrace(Counterexample trace, string currProc, TraceLocation currLocation, Dictionary<string, Tuple<Block, Implementation>> origProg)
-        {
-            // we cannot be starting in the last block
-            Debug.Assert(currLocation.numBlock != trace.Trace.Count - 1);
-            // we cannot be starting in the middle of a block
-            Debug.Assert(currLocation.numInstr == 0);
-
-            var newTrace = new List<Block>();
-            var newTraceCallees = new Dictionary<TraceLocation, CalleeCounterexampleInfo>();
-            
-            Block currOrigBlock = null;
-            Implementation currOrigImpl = null;
-            int currOrigInstr = 0;
-
-            while (true)
-            {
-                if (currLocation.numInstr == 0 && origProg.ContainsKey(trace.Trace[currLocation.numBlock].Label))
-                {
-                    var origPlace = origProg[trace.Trace[currLocation.numBlock].Label];
-                    if (currOrigImpl != null && currOrigImpl.Name != origPlace.Item2.Name)
-                    {
-                        // change of proc
-
-                        // First, recurse
-                        var calleeTrace = ReconstructTrace(trace, origPlace.Item2.Name, currLocation, origProg);
-                        // Find the call to this guy in currOrigBlock
-                        while (currOrigInstr < currOrigBlock.Cmds.Count)
-                        {
-                            var cmd = currOrigBlock.Cmds[currOrigInstr] as CallCmd;
-                            if (cmd != null && cmd.callee == origPlace.Item2.Name)
-                                break;
-                            currOrigInstr++;
-                        }
-                        Debug.Assert(currOrigInstr != currOrigBlock.Cmds.Count);
-                        newTraceCallees.Add(new TraceLocation(newTrace.Count - 1, currOrigInstr), new CalleeCounterexampleInfo(calleeTrace, new List<object>()));
-                        // we're done
-                        break;
-                    }
-
-                    currOrigBlock = origPlace.Item1;
-                    currOrigImpl = origProg[trace.Trace[currLocation.numBlock].Label].Item2;
-                    currOrigInstr = 0;
-
-                    newTrace.Add(currOrigBlock);
-                }
-
-                if (trace.calleeCounterexamples.ContainsKey(currLocation))
-                {
-                    // find the corresponding call in origBlock
-                    var calleeInfo = trace.calleeCounterexamples[currLocation];
-                    var calleeName = trace.getCalledProcName(trace.Trace[currLocation.numBlock].Cmds[currLocation.numInstr]);
-                    while (currOrigInstr < currOrigBlock.Cmds.Count)
-                    {
-                        var cmd = currOrigBlock.Cmds[currOrigInstr] as CallCmd;
-                        if (cmd != null && cmd.callee == calleeName)
-                            break;
-                        currOrigInstr++;                        
-                    }
-                    Debug.Assert(currOrigInstr != currOrigBlock.Cmds.Count);
-                    newTraceCallees.Add(new TraceLocation(newTrace.Count - 1, currOrigInstr), calleeInfo);
-                }
-
-                // increment location
-                currLocation.numInstr++;
-                if (currLocation.numInstr >= trace.Trace[currLocation.numBlock].Cmds.Count)
-                {
-                    currLocation.numBlock++;
-                    currLocation.numInstr = 0;
-                }
-                if (currLocation.numBlock == trace.Trace.Count)
-                    break;
-            }
-
-            var ret = new AssertCounterexample(newTrace, null, null, trace.Model, trace.MvInfo, trace.Context);
-            ret.calleeCounterexamples = newTraceCallees;
-
             return ret;
         }
 
@@ -780,55 +691,30 @@ namespace cba.Util
         }
         private int _stratifiedInlining;
 
-        public string newStratifiedInliningAlgo;
-
-        public bool NonUniformUnfolding;
-
         public HashSet<string> CallTree;
 
         public bool StratifiedInliningWithoutModels;
         public bool UseProverEvaluate;
         public string ModelViewFile;
 
-        public bool useFwdBck;
-        public bool useDI;
-
-        // Bound on maximum procs that can be inlined (0 = no bound)
-        public int maxInlinedBound;
-
-        // Printing the program setnt to Boogie
-        public bool printProg;
-        public string progFileName;
-
         // Extended API
         public Dictionary<string, int> extraRecBound;
-        public HashSet<string> extraFlags;
 
         // Default options
         public BoogieVerifyOptions()
         {
             StratifiedInlining = 1;
-            newStratifiedInliningAlgo = null;
-            NonUniformUnfolding = false;
             CallTree = null;
             StratifiedInliningWithoutModels = false;
             UseProverEvaluate = true;
             ModelViewFile = null;
-            printProg = false;
-            progFileName = null;
             extraRecBound = new Dictionary<string, int>();
-            useFwdBck = false;
-            useDI = false;
-            extraFlags = new HashSet<string>();
-            maxInlinedBound = 0;
         }
 
         public BoogieVerifyOptions Copy()
         {
             var ret = new BoogieVerifyOptions();
             ret.StratifiedInlining = StratifiedInlining;
-            ret.newStratifiedInliningAlgo = newStratifiedInliningAlgo;
-            ret.NonUniformUnfolding = NonUniformUnfolding;
             ret.CallTree = CallTree;
             if (CallTree != null)
             {
@@ -837,13 +723,7 @@ namespace cba.Util
             ret.StratifiedInliningWithoutModels = StratifiedInliningWithoutModels;
             ret.UseProverEvaluate = UseProverEvaluate;
             ret.ModelViewFile = ModelViewFile;
-            ret.printProg = printProg;
-            ret.progFileName = progFileName;
-            ret.useFwdBck = useFwdBck;
-            ret.useDI = useDI;
-            ret.maxInlinedBound = maxInlinedBound;
             ret.extraRecBound = new Dictionary<string, int>(ret.extraRecBound);
-            ret.extraFlags.UnionWith(extraFlags);
 
             return ret;
         }

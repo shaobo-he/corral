@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -227,7 +227,7 @@ namespace cba
             //lowerProg.writeToFile("RefineLow.bpl");
 
             var p = upperProg.getCBAProgram();
-            
+
             if (p.Typecheck() != 0)
             {
                 p.Emit(new TokenTextWriter("error.bpl"));
@@ -490,7 +490,7 @@ namespace cba
                     initialMap.Add(token, new VarSet());
                     allTokens.Add(token);
                 }
-                
+
                 foreach (var vp in allVars)
                 {
                     var token = globalToToken[vp.fst];
@@ -541,7 +541,7 @@ namespace cba
                 d = m.map(d);
                 d.Add(m.defaultSet());
             }
-            
+
             file.WriteLine("{0}", d.Variables.Print());
             file.WriteLine("{0}", d.ToString());
 
@@ -594,7 +594,7 @@ namespace cba
         {
             numMappingsAdded.Add(0);
         }
-        
+
         // Add a variable/procedure mapping
         public void Add(VarProcMapping m)
         {
@@ -637,113 +637,6 @@ namespace cba
             return ret;
         }
     }
-
-    // The current refinement state of Corral. 
-    // This is a simpler version of RefinementState
-    public class GlobalRefinementState : RefinementState
-    {
-        private Dictionary<string, HashSet<string>> varToProcs;
-
-        // Input:
-        //   allVars: allVars of the original concurrent program
-        //   trackedVars: The set of variables to be tracked initially (as specified by the user)
-        public GlobalRefinementState(VarSet allVars, HashSet<string> trackedVars)
-            : base(allVars, trackedVars, false)
-        {
-            varToProcs = null;
-
-            // Filter out proc names from initial map
-            foreach (var t in allTokens)
-            {
-                initialMap[t] = new VarSet(initialMap[t].Variables, "");
-            }
-        }
-
-        public GlobalRefinementState(PersistentCBAProgram program, HashSet<string> trackedVars)
-            : this(program.allVars, trackedVars) { }
-
-        public GlobalRefinementState(Program program, HashSet<string> trackedVars)
-            : this(VarSet.GetAllVars(program), trackedVars) { }
-
-        public void setAllVars(VarSet av)
-        {
-            Debug.Assert(av != null);
-            varToProcs = new Dictionary<string,HashSet<string>>();
-            foreach (var v in av.Variables)
-            {
-                varToProcs.Add(v, new HashSet<string>());
-            }
-
-            foreach (var vp in av)
-            {
-                varToProcs[vp.fst].Add(vp.snd);
-            }
-        }
-
-        // Get the set of (var,proc) pairs represented by the given set of tokens
-        public override  VarSet getVars(HashSet<IRefinementToken> tokens)
-        {
-            Debug.Assert(varToProcs != null);
-
-            var vars = base.getVars(tokens);
-
-            return addAllProcs(vars);
-        }
-
-        // Get the set of (var,proc) pairs that correspond to token. 
-        // Do not include the default set
-        public override VarSet getOnlyMappedVars(IRefinementToken token)
-        {
-            Debug.Assert(varToProcs != null);
-
-            var vars = base.getOnlyMappedVars(token);
-
-            return addAllProcs(vars);
-        }
-
-        private VarSet addAllProcs(VarSet vars)
-        {
-            var ret = new VarSet();
-            foreach (var vp in vars)
-            {
-                Debug.Assert(vp.snd == "");
-                if (varToProcs.ContainsKey(vp.fst))
-                {
-                    ret.Add(new VarSet(vp.fst, varToProcs[vp.fst]));
-                }
-            }
-            return ret;
-        }
-        
-        public override void debugPrint(string fname)
-        {
-            var file = new System.IO.StreamWriter(fname);
-
-            foreach (var token in allTokens)
-            {
-                file.WriteLine("Token {0}", token.ToString());
-                file.WriteLine("{0}", getOnlyMappedVars(token).Variables.Print());
-                file.WriteLine("{0}", getOnlyMappedVars(token).ToString());
-
-            }
-
-            file.WriteLine("Default");
-            var d = new VarSet();
-            foreach (var m in mappings)
-            {
-                d = m.map(d);
-                d.Add(m.defaultSet());
-            }
-            d = addAllProcs(d);
-
-            file.WriteLine("{0}", d.Variables.Print());
-            file.WriteLine("{0}", d.ToString());
-
-            file.Close();
-        }
-        
-    }
-
     public class FullVariableAbstraction
     {
         RefinementState refinementState;
@@ -769,7 +662,7 @@ namespace cba
 
             this.tokens = refinementState.allTokens.Difference(tracked).Difference(dontTrack);
             this.varsToInstrument = new HashSet<string>();
-            
+
             int cnt = 0;
             foreach (var token in tokens)
             {
@@ -808,7 +701,7 @@ namespace cba
                 doTransformation(impl);
                 impl.LocVars.AddRange(localVarsToAdd);
             }
-            
+
             foreach (var proc in program.TopLevelDeclarations.OfType<Procedure>())
                 doTransformation(proc, impls.Contains(proc.Name));
 
@@ -1100,7 +993,7 @@ namespace cba
                     {
                         AssignCmd acmd = (AssignCmd)cmd;
 
-                        if(acmd.Lhss.Count != 1)
+                        if (acmd.Lhss.Count != 1)
                             throw new InternalError("Cannot yet handle parallel assigns with count " + (acmd.Lhss.Count).ToString());
 
                         AssignLhs lhs = acmd.Lhss[0];
@@ -1301,78 +1194,6 @@ namespace cba
         }
     }
 
-    // The Variable/Procedure mapping carried out by the sequentialization transformation
-    public class InstrMapping : VarProcMapping
-    {
-        // A map: [original program variable -> Set of instrumented program variables that it produced]
-        Dictionary<string, HashSet<string>> varMapping;
-        // The set of new variables added in the instrumented program
-        protected HashSet<string> newVarsAdded;
-        // The set of new procedures added in the instrumented program
-        HashSet<string> newProcsAdded;
-        // The set of all variables in the instrumented program
-        HashSet<string> allVars;
-        // The set of all procedures in the instrumented program
-        HashSet<string> allProcs;
-        // The set of (var,proc) pairs added in the instrumented program
-        VarSet pairsAdded;
-        // The set of (var,proc) pairs in the instrumented program
-        VarSet allPairs;
-        // Name of main (that has the Checker)
-        string mainProcName;
-
-        public InstrMapping(StormInstrumentationPass inst)
-        {
-            allVars = new HashSet<string>();
-            allProcs = new HashSet<string>();
-            newProcsAdded = new HashSet<string>();
-            newVarsAdded = new HashSet<string>();
-            varMapping = new Dictionary<string, HashSet<string>>();
-            
-            var instrumentedProg = inst.output.getProgram();
-            var globals = BoogieUtil.GetGlobalVariables(instrumentedProg);
-            var procs = BoogieUtil.GetProcedures(instrumentedProg);
-            mainProcName = (inst.input as PersistentCBAProgram).mainProcName;
-
-            globals.Iter(g => allVars.Add(g.Name));
-            procs.Iter(p => allProcs.Add(p.Name));
-
-            newProcsAdded = inst.getInstrumentedProcedures();
-
-            var inpGlobals = BoogieUtil.GetGlobalVariables(inst.input.getProgram());
-            newVarsAdded = new HashSet<string>(allVars);
-
-            foreach (var g in inpGlobals)
-            {
-                var ig = inst.getInstrumentedVars(g.Name);
-                varMapping.Add(g.Name, ig);
-                newVarsAdded.ExceptWith(ig);
-            }
-
-            allPairs = VarSet.GetAllVars(instrumentedProg);
-            var v1 = new VarSet(newVarsAdded, allProcs);
-            var v2 = new VarSet(allVars, newProcsAdded);
-            pairsAdded = v1.Union(v2).Intersection(allPairs);
-        }
-
-        // Map (x,p) to { (x__1, p), (x__2, p), ..., (x_K, p) }
-        public override VarSet map(Duple<string, string> v)
-        {
-            Debug.Assert(varMapping.ContainsKey(v.fst));
-            var v1 = new VarSet(varMapping[v.fst], v.snd);
-            // include main because it has the checker instrumentation
-            var v2 = new VarSet(varMapping[v.fst], mainProcName);
-            return v1.Union(v2);
-        }
-
-        // Returns: ((NewVars x AllProcs) U (AllVars x NewProcs)) 
-        //          Intersect (AllVarProc that occur in the program)
-        public override VarSet defaultSet()
-        {
-            return pairsAdded;
-        }
-    }
-
     // The Variable/Procedure mapping carried out when a program is restricted to a trace.
     // Procedures get renamed to possibly multiple (0 or many) procedures.
     public class TraceMapping : VarProcMapping
@@ -1416,85 +1237,4 @@ namespace cba
 
     }
 
-    // The Variable/Procedure mapping in which variables are added
-    public class AddVarMapping : VarProcMapping
-    {
-        VarSet varsAdded;
-
-        public AddVarMapping(VarSet varsAdded)
-        {
-            this.varsAdded = varsAdded;
-        }
-
-        // Map the procedure to its new incarnations (if any)
-        public override VarSet map(Duple<string, string> var)
-        {
-            return new VarSet(var.fst, var.snd);
-        }
-
-        public override VarSet defaultSet()
-        {
-            return varsAdded;
-        }
-
-    }
-
-    
-    // The Variable/Procedure mapping carried out by inlining.
-    // Multiple procedures (namely those that get inlined) get merged into the same procedure.
-    // Some variables (unused ones) also get deleted.
-    // Note: this is unsafe to use with Local Variable Abstraction -- because a mapping
-    // that merges procedures cannot really be supported. The reason is that each refinement
-    // token must map to a disjoint set of (var,proc) pairs
-    public class InliningMapping : VarProcMapping
-    {
-        HashSet<string> procsMerged;
-        string mainProcName;
-        HashSet<string> varsDeleted;
-
-        public InliningMapping(StaticInliningAndUnrollingPass cp)
-        {
-            Debug.Assert(cp.settings.numLoopUnrolls == -1);
-            Debug.Assert(cp.settings.staticInlining == 1);
-
-            var inProg = cp.input.getProgram();
-
-            mainProcName = (cp.input as PersistentCBAProgram).mainProcName;
-            var procs = BoogieUtil.GetProcedures(inProg);
-
-            // Get hold of all procedures that were inlined
-            procsMerged = new HashSet<string>();
-            foreach (var p in procs)
-            {
-                if (QKeyValue.FindIntAttribute(p.Attributes, "inline", -1) != -1)
-                {
-                    procsMerged.Add(p.Name);
-                }
-            }
-
-            // Get hold of variables that were deleted
-            var outProg = cp.output.getProgram();
-            var inGlobals = new HashSet<string>();
-            BoogieUtil.GetGlobalVariables(inProg).Iter(g => inGlobals.Add(g.Name));
-            var outGlobals = new HashSet<string>();
-            BoogieUtil.GetGlobalVariables(outProg).Iter(g => outGlobals.Add(g.Name));
-            varsDeleted = inGlobals.Difference(outGlobals);
-           
-        }
-
-        public override VarSet map(Duple<string, string> var)
-        {
-            if (varsDeleted.Contains(var.fst))
-            {
-                return new VarSet();
-            }
-
-            if (procsMerged.Contains(var.snd))
-            {
-                return new VarSet(var.fst, mainProcName);
-            }
-            return new VarSet(var.fst, var.snd);
-        }
-    }
-    
 }

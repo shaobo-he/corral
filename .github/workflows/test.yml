@@ -4,26 +4,25 @@ on: [push, pull_request, workflow_dispatch]
 
 env:
   SOLUTION: source/Corral.sln
-  AVSOLUTION: source/av.sln
   Z3URL: https://github.com/Z3Prover/z3/releases/download/z3-4.8.8/z3-4.8.8-x64-ubuntu-16.04.zip
 
 jobs:
   job0:
     name: Corral CI
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         configuration: [Debug, Release]
     steps:
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v1
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '6.0.x'
+          dotnet-version: '8.0.x'
       - name: Checkout Corral
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install tools, build Corral, build Angelic Verifier
+      - name: Install tools, build Corral
         run: |
           # Download a Z3 release
           wget ${Z3URL}
@@ -34,27 +33,9 @@ jobs:
           dotnet tool restore
           # Build Corral
           dotnet build -c ${{ matrix.configuration }} ${SOLUTION}
-          # Build Angelic Verifier
-          dotnet build -c ${{ matrix.configuration }} ${AVSOLUTION}
       - name: Test Corral
         run: |
           export PATH="$(find $PWD/z3* -name bin -type d):$PATH"
           cd $GITHUB_WORKSPACE
           export CONFIGURATION=${{ matrix.configuration }}
           (cd test/regression && perl check.pl)
-      - name: Test Fwdbck
-        run: |
-          export PATH="$(find $PWD/z3* -name bin -type d):$PATH"
-          cd $GITHUB_WORKSPACE
-          export CONFIGURATION=${{ matrix.configuration }}
-          (cd test/fwdbck && perl checkNSIFB.pl)
-      - name: Test AliasAnalysis
-        run: |
-          export PATH="$(find $PWD/z3* -name bin -type d):$PATH"
-          cd $GITHUB_WORKSPACE/test/AliasAnalysis
-          ./run.sh ${{ matrix.configuration }}
-      - name: Test Angelic Verifier
-        run: |
-          export PATH="$(find $PWD/z3* -name bin -type d):$PATH"
-          cd $GITHUB_WORKSPACE/test/av-regressions
-          ./run.sh ${{ matrix.configuration }}

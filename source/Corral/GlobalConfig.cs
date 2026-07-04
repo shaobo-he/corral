@@ -20,9 +20,6 @@ namespace cba
         // Generic annotations
         public static List<string> annotations = new List<string>();
 
-        // catch all exceptions?
-        public static bool catchAllExceptions = false;
-
         // Use ArrayTheory in the boogie verifier
         public static ArrayTheoryOptions useArrayTheory = ArrayTheoryOptions.WEAK;
 

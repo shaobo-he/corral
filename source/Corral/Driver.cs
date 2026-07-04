@@ -70,7 +70,6 @@ namespace cba
             GlobalConfig.addRaiseException = true;
             GlobalConfig.recursionBound = config.recursionBound;
             GlobalConfig.timeOut = config.timeout;
-            GlobalConfig.catchAllExceptions = false;
             GlobalConfig.addInvariants = 2;
 
             CoreLib.StratifiedInlining.StratifiedInliningVerbose = config.verboseMode;
@@ -168,11 +167,6 @@ namespace cba
                 lprog = el.run(lprog);
 
                 var LBoptions = ConfigManager.progVerifyOptions.Copy();
-                LBoptions.useDI = false;
-                LBoptions.useFwdBck = false;
-                LBoptions.NonUniformUnfolding = false;
-                LBoptions.extraFlags = new HashSet<string>();
-                LBoptions.newStratifiedInliningAlgo = "";
                 ConfigManager.progVerifyOptions.extraRecBound = new Dictionary<string, int>();
 
                 try

@@ -25,7 +25,8 @@ namespace cba
         // Stores how the blocks have been merged.
         Dictionary<string, MergingInfo> tinfo;
 
-        public CompressBlocks() {
+        public CompressBlocks()
+        {
             locationBlockMap = new Dictionary<string, Block>();
             succBlocks = new Dictionary<string, HashSet<string>>();
             predBlocks = new Dictionary<string, HashSet<string>>();
@@ -57,7 +58,7 @@ namespace cba
         public void VisitImplementation(Implementation node)
         {
             List<Block> blocks = node.Blocks;
-            
+
             clear();
             tinfo.Add(node.Name, new MergingInfo());
 

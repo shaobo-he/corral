@@ -24,7 +24,7 @@ namespace cba
         // (All or some fixed one)
         public ConcurrencyMode mode;
 
-        public CBAProgram(Program p, string main, int bound) :  base()
+        public CBAProgram(Program p, string main, int bound) : base()
         {
             tok = p.tok;
             TopLevelDeclarations = p.TopLevelDeclarations;
@@ -71,7 +71,7 @@ namespace cba
 
         // To enable lazy computation of allVars
         private VarSet allVarsLazy;
-        
+
         // Name of the main procedure
         public string mainProcName { get; private set; }
 
