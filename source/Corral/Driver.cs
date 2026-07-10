@@ -187,6 +187,15 @@ namespace cba
             // Other transformations
             //////
 
+            // Analyze dependencies among SMACK-generated assertions while assertion
+            // metadata is still attached to the original Boogie assert commands.
+            SmackDependencyAnalysisPass depPass = null;
+            if (config.smackDependencyAnalysis)
+            {
+                depPass = new SmackDependencyAnalysisPass();
+                inputProg = depPass.run(inputProg);
+            }
+
             // Rewrite assert commands
             RewriteAssertsPass apass = new RewriteAssertsPass();
             var curr = apass.run(inputProg);
@@ -220,7 +229,7 @@ namespace cba
             #endregion
 
             // For debugging, create an Action for printing a trace at the source level
-            var passes = new List<CompilerPass>(new CompilerPass[] { seqInstr, prune, rcalls, apass });
+            var passes = new List<CompilerPass>(new CompilerPass[] { seqInstr, prune, rcalls, apass, depPass });
             var printTrace = new Action<ErrorTrace, string>((trace, fileName) =>
                 {
                     if (GlobalConfig.genCTrace == null)
@@ -259,6 +268,10 @@ namespace cba
                     cexTrace = rcalls.mapBackTrace(cexTrace);
 
                     cexTrace = apass.mapBackTrace(cexTrace);
+                    if (depPass != null)
+                    {
+                        cexTrace = depPass.mapBackTrace(cexTrace);
+                    }
 
                     var traceName = "corral_out";
                     if (config.NumCex > 1)

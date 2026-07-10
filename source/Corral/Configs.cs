@@ -25,6 +25,7 @@ namespace cba
             Console.WriteLine(" /timeLimit:n       \t Set Z3 timeout to n sec (default 500)");
             Console.WriteLine(" /cex:n             \t Max counterexamples");
             Console.WriteLine(" /maxStaticLoopBound:n\t Upper bound on minimum loop iterations");
+            Console.WriteLine(" /smackDependencyAnalysis\t Enable SMACK assertion dependency analysis");
             Console.WriteLine(" /tryCTrace         \t Generate C-style error trace");
             Console.WriteLine(" /noTraceOnDisk     \t Don't write trace files to disk");
             Console.WriteLine(" /printDataValues:n \t Print data values in trace");
@@ -62,6 +63,8 @@ namespace cba
         public int NumCex { get; private set; }
 
         public int verboseMode { get; private set; }
+
+        public bool smackDependencyAnalysis { get; private set; }
 
         public static Configs parseCommandLine(string[] args)
         {
@@ -146,6 +149,8 @@ namespace cba
             useProverEvaluate = false;
 
             NumCex = 1;
+
+            smackDependencyAnalysis = false;
         }
 
 
@@ -208,6 +213,10 @@ namespace cba
             else if (flag == "/noTraceOnDisk")
             {
                 noTraceOnDisk = true;
+            }
+            else if (flag == "/smackDependencyAnalysis")
+            {
+                smackDependencyAnalysis = true;
             }
             else if (flag.StartsWith("/v:"))
             {

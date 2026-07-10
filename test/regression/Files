@@ -23,6 +23,8 @@
 loop\seq.bpl b
 loop\assert.bpl b
 smack\a.bpl b
+smack-dependency\bitvector.bpl c
+smack-dependency\dependency.bpl c
 cex\twoasserts.bpl b
 cex\loopassert.bpl b
 cex\skipasserts1.bpl b
