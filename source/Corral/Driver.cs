@@ -189,16 +189,19 @@ namespace cba
 
             // Analyze dependencies among SMACK-generated assertions while assertion
             // metadata is still attached to the original Boogie assert commands.
+            // Note: inputProg must remain the pass's input program because error
+            // traces are mapped back through depPass before being printed against it.
             SmackDependencyAnalysisPass depPass = null;
+            var verifProg = inputProg;
             if (config.smackDependencyAnalysis)
             {
                 depPass = new SmackDependencyAnalysisPass();
-                inputProg = depPass.run(inputProg);
+                verifProg = depPass.run(inputProg);
             }
 
             // Rewrite assert commands
             RewriteAssertsPass apass = new RewriteAssertsPass();
-            var curr = apass.run(inputProg);
+            var curr = apass.run(verifProg);
 
             // Rewrite call commands 
             RewriteCallCmdsPass rcalls = new RewriteCallCmdsPass(true);

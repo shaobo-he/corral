@@ -88,11 +88,17 @@ foreach my $line (@files) {
     my $outputPath = File::Spec->catfile(cwd(), 'out');
     my $cmd = join(' ', $corralPath, $filePath, "/flags:$configPath", $flags, '>', $outputPath);
     print $cmd; print "\n";
+    my $exitStatus;
     {
         my $wd = cwd();
         chdir $dir;
-        system($cmd);
+        $exitStatus = system($cmd);
         chdir $wd;
+    }
+
+    # Corral exits with 0 on both verdicts; anything else is a crash.
+    if($exitStatus != 0) {
+	    die "Test $file failed: corral exited abnormally (status $exitStatus)\n";
     }
 
     # Check result
