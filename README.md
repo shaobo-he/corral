@@ -95,7 +95,7 @@ Run `corral` with no arguments for the same list.
 | `/main:str` | Entry procedure name |
 | `/recursionBound:n` | Recursion depth bound (default 1) |
 | `/trackAllVars` | Track all shared variables |
-| `/useArrayTheory` | Use Z3's native array theory |
+| `/useArrayTheory` | Use *extensional* arrays — see the note below |
 | `/useProverEvaluate` | Use prover evaluate mode |
 | `/timeLimit:n` | Z3 timeout in seconds |
 | `/cex:n` | Maximum number of counterexamples (default 1) |
@@ -107,6 +107,14 @@ Run `corral` with no arguments for the same list.
 | `/bopt:str` | Pass-through option for Boogie |
 
 `/flags:filename` reads additional flags from `filename`.
+
+**`/useArrayTheory` means something different here than on `mini-corral`.**
+Boogie 3.5.6 no longer takes a `/useArrayTheory` switch — array theory is always
+on — so the port stopped forwarding one. What is left is the extensionality
+setting: the default (flag absent) still adds
+`/proverOpt:O:smt.array.extensional=false`, and passing `/useArrayTheory` now
+only suppresses that, leaving Z3's extensional arrays in place. The flag is
+still accepted and parsed; it just no longer switches array theory on.
 
 ## Regressions
 
