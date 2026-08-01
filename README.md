@@ -8,6 +8,11 @@ tailored for the [SMACK](https://github.com/smackers/smack) verification
 toolchain. It keeps only the code paths that SMACK actually exercises (see
 SMACK's `top.py` and `svcomp/utils.py`) and drops everything else.
 
+> **Branch note.** This is the `mini-corral-boogie-3.5.6-refresh` branch: the
+> `mini-corral` baseline ported from **Boogie 2.9.1 to Boogie 3.5.6**. Its
+> verification behavior is meant to match the `mini-corral` branch; only the
+> Boogie dependency and the code adapting to its API differ.
+
 Corral is a solver for the reachability modulo theories problem: given a Boogie
 program, it looks for an execution that reaches an `assert` violation, using
 stratified inlining over a bounded recursion depth plus variable-abstraction
@@ -41,6 +46,21 @@ Removed, among others:
 The stdout signals SMACK greps for are preserved verbatim: `Exhausted recursion
 bound of N`, `Verifying program while tracking`, `Program has no bugs`, and
 `This assertion can fail`.
+
+## The Boogie 3.5.6 port
+
+The `Boogie.ExecutionEngine` package reference in
+[`source/Directory.Build.props`](source/Directory.Build.props) is pinned to
+**3.5.6** (`mini-corral` is on 2.9.1). Adapting to that API required, among
+other things:
+
+- Keeping `SIBoolControlVC` paired with prover evaluation across program, path,
+  and refinement verification, and installing Boogie's `CodeExpr` converter so
+  code-expression inputs do not crash stratified bool-control VC generation.
+- Preserving the recursion-bound retry behavior after Boogie folded bound
+  exhaustion into `Inconclusive`.
+- Preserving legacy async-call handling during resolve/typecheck, and
+  normalizing procedure links before modifies inference.
 
 ## Building and running
 
@@ -110,5 +130,5 @@ Tests for removed features (`/track`, `/concat`, `/cooperative`,
 concurrency-dependent tests have been pruned along with the code.
 
 [license-badge]: https://img.shields.io/github/license/shaobo-he/corral?color=blue
-[ci]:            https://github.com/shaobo-he/corral/actions/workflows/test.yml?query=branch%3Amini-corral
-[ci-badge]:      https://github.com/shaobo-he/corral/actions/workflows/test.yml/badge.svg?branch=mini-corral
+[ci]:            https://github.com/shaobo-he/corral/actions/workflows/test.yml?query=branch%3Amini-corral-boogie-3.5.6-refresh
+[ci-badge]:      https://github.com/shaobo-he/corral/actions/workflows/test.yml/badge.svg?branch=mini-corral-boogie-3.5.6-refresh
