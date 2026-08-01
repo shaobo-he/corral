@@ -62,7 +62,7 @@ Note that this fork is **not** published to NuGet — `dotnet tool install
 ### SMT solver
 
 Running mini-corral requires [Z3](https://github.com/Z3Prover/z3) on `PATH`. CI
-tests against Z3 4.8.8.
+tests against Z3 5.0.0.
 
 ### Flags
 
