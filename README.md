@@ -1,6 +1,7 @@
 # mini-corral
 
 [![License][license-badge]](LICENSE.txt)
+[![CI][ci-badge]][ci]
 
 **mini-corral** is a trimmed-down [Corral](https://github.com/boogie-org/corral)
 tailored for the [SMACK](https://github.com/smackers/smack) verification
@@ -108,4 +109,6 @@ Tests for removed features (`/track`, `/concat`, `/cooperative`,
 `/staticInlining`, `/stackDepthBound`, `/noTrace`, `fwdbck`) and
 concurrency-dependent tests have been pruned along with the code.
 
-[license-badge]: https://img.shields.io/github/license/boogie-org/corral?color=blue
+[license-badge]: https://img.shields.io/github/license/shaobo-he/corral?color=blue
+[ci]:            https://github.com/shaobo-he/corral/actions/workflows/test.yml?query=branch%3Amini-corral
+[ci-badge]:      https://github.com/shaobo-he/corral/actions/workflows/test.yml/badge.svg?branch=mini-corral
