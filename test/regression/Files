@@ -41,3 +41,4 @@ irreducible\irred_call.bpl b
 irreducible\irred_nocall.bpl b
 dupmodifies\dup.bpl b
 dupmodifies\entrydup.bpl b
+dupmodifies\stubdup.bpl b
