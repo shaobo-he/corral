@@ -169,11 +169,6 @@ namespace cba.Util
                 }
             }
 
-            // Sort declarations by name after loop extraction so generated loop
-            // procedures are included in the deterministic order.
-            program.TopLevelDeclarations =
-                program.TopLevelDeclarations.OrderBy(d => (d is NamedDeclaration nd) ? nd.Name : "").ToList();
-
             // set bounds
             if (options.extraRecBound != null)
             {
