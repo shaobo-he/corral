@@ -66,9 +66,17 @@ namespace cba.Util
             // CallCmd.ComputeDesugaring builds a Dictionary keyed on the modified
             // variable and throws ArgumentException on a duplicate -- its own comment
             // records the assumption ("this assumes no duplicates in this.Proc.Modifies").
-            // Duplicates can arrive either from a shared list mutated through two
-            // programs, or straight from the input text, since InferModifies=true
-            // disables the resolver's modifies check.
+            // On real SMACK input the duplicates come from stale cross-program
+            // Decl pointers rather than from a shared list. Measured on
+            // bench/bpl-u4 with SMACK's flags, the instrumented main arrives here
+            // with every modifies entry pointing at a *previous* program's
+            // GlobalVariable objects -- same names, different instances -- so the
+            // identity comparison matches nothing and a full second copy is
+            // appended:
+            //     parport_false.i.cil   main_SeqInstr  59 -> 119  (59/59 foreign)
+            //     pointers_fail         main_SeqInstr   2 ->   5  (2/2 foreign)
+            // Duplicates can also arrive straight from the input text, since
+            // InferModifies=true disables the resolver's modifies check.
             foreach (var proc in p.TopLevelDeclarations.OfType<Procedure>())
             {
                 if (proc.Modifies == null || proc.Modifies.Count < 2)
