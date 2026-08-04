@@ -700,6 +700,15 @@ namespace cba.Util
         // Extended API
         public Dictionary<string, int> extraRecBound;
 
+        // Use DAG inlining: merge call sites onto an existing VC where the
+        // inlining tree would otherwise grow a duplicate subtree.
+        public bool useDI;
+
+        // Knobs for DAG inlining, set via /diFlag:<name>. Recognised names are
+        // DiNone, DiRandom, DiRandomPick, DiMaxc, DiOpt (merge-candidate policy),
+        // DiCheckSanity and DumpDag.
+        public HashSet<string> extraFlags;
+
         // Default options
         public BoogieVerifyOptions()
         {
@@ -709,6 +718,8 @@ namespace cba.Util
             UseProverEvaluate = true;
             ModelViewFile = null;
             extraRecBound = new Dictionary<string, int>();
+            useDI = false;
+            extraFlags = new HashSet<string>();
         }
 
         public BoogieVerifyOptions Copy()
@@ -723,6 +734,8 @@ namespace cba.Util
             ret.StratifiedInliningWithoutModels = StratifiedInliningWithoutModels;
             ret.UseProverEvaluate = UseProverEvaluate;
             ret.ModelViewFile = ModelViewFile;
+            ret.useDI = useDI;
+            ret.extraFlags.UnionWith(extraFlags);
             ret.extraRecBound = new Dictionary<string, int>(ret.extraRecBound);
 
             return ret;

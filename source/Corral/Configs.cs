@@ -27,6 +27,8 @@ namespace cba
             Console.WriteLine(" /maxStaticLoopBound:n\t Upper bound on minimum loop iterations");
             Console.WriteLine(" /tryCTrace         \t Generate C-style error trace");
             Console.WriteLine(" /noTraceOnDisk     \t Don't write trace files to disk");
+            Console.WriteLine(" /di                \t Use DAG inlining");
+            Console.WriteLine(" /set:str           \t Set a DAG-inlining knob (DiRandom, DiMaxc, DiOpt, ...)");
             Console.WriteLine(" /printDataValues:n \t Print data values in trace");
             Console.WriteLine(" /v:n               \t Verbose mode level");
             Console.WriteLine(" /bopt:str          \t Pass-through options to Boogie");
@@ -62,6 +64,12 @@ namespace cba
         public int NumCex { get; private set; }
 
         public int verboseMode { get; private set; }
+
+        // Use DAG inlining during program verification
+        public bool useDI { get; private set; }
+
+        // Knobs for DAG inlining, given as /set:<name>
+        public HashSet<string> extraFlags { get; private set; }
 
         public static Configs parseCommandLine(string[] args)
         {
@@ -146,6 +154,9 @@ namespace cba
             useProverEvaluate = false;
 
             NumCex = 1;
+
+            useDI = false;
+            extraFlags = new HashSet<string>();
         }
 
 
@@ -204,6 +215,15 @@ namespace cba
             else if (flag == "/tryCTrace")
             {
                 genCTrace = TraceFormat.ConcurrencyExplorer;
+            }
+            else if (flag == "/di")
+            {
+                useDI = true;
+            }
+            else if (flag.StartsWith("/set:"))
+            {
+                var split = flag.Split(sep);
+                extraFlags.Add(split[1]);
             }
             else if (flag == "/noTraceOnDisk")
             {

@@ -231,6 +231,10 @@ namespace cba
             progVerifyOptions.CallTree = new HashSet<string>();
             progVerifyOptions.UseProverEvaluate = config.useProverEvaluate;
             progVerifyOptions.StratifiedInliningWithoutModels = progVerifyOptions.UseProverEvaluate ? true : false;
+            // DAG inlining applies to program verification only; path and
+            // refinement queries keep plain tree inlining.
+            progVerifyOptions.useDI = config.useDI;
+            progVerifyOptions.extraFlags.UnionWith(config.extraFlags);
 
             // Path
             pathVerifyOptions = new BoogieVerifyOptions();
