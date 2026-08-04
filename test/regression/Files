@@ -37,3 +37,5 @@ datatype\fassign_ok.bpl c
 datatype\unpack.bpl b
 datatype\unpack_ok.bpl c
 recbound\recbound.bpl c
+irreducible\irred_call.bpl b
+irreducible\irred_nocall.bpl b

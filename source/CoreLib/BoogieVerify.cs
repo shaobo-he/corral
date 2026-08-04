@@ -635,6 +635,36 @@ namespace cba.Util
         }
 
         // Note: this does not reconstruct the failing assert in trace
+        // Recover the block an irreducible-loop node split came from.
+        //
+        // LoopExtractor.ExtractLoops first makes the CFG reducible (Program.ProcessLoops
+        // -> Implementation.ConvertToReducible), which splits nodes by duplicating
+        // blocks under the name "<label>_dup_<n>", and only afterwards builds the map it
+        // hands back. So that map covers the loop extraction but not the splitting, and
+        // origProg -- snapshotted before the whole call -- has never heard of the
+        // duplicates. Boogie records no other link back to the block a duplicate came
+        // from, so the label is all we have. A split is a verbatim copy, so the block it
+        // came from is the right one to report, and collapsing the copies yields a path
+        // that is still valid in the original CFG (a duplicate keeps its source's
+        // successors). Only consult the label when no block of that name really exists,
+        // so a program with its own "foo_dup_0" block is unaffected.
+        private static Block FindSplitBlockOriginal(string label, Dictionary<string, Block> originalBlocks)
+        {
+            const string DupMarker = "_dup_";
+
+            while (true)
+            {
+                var cut = label.LastIndexOf(DupMarker, StringComparison.Ordinal);
+                if (cut < 0) return null;
+
+                var suffix = label.Substring(cut + DupMarker.Length);
+                if (suffix.Length == 0 || !suffix.All(char.IsDigit)) return null;
+
+                label = label.Substring(0, cut);
+                if (originalBlocks.TryGetValue(label, out var original)) return original;
+            }
+        }
+
         public static void ReconstructImperativeTrace(Counterexample trace, string currProc, Dictionary<string, Implementation> origProg)
         {
             if (trace == null) return;
@@ -650,6 +680,8 @@ namespace cba.Util
 
                 Block ib;
                 originalBlocks.TryGetValue(b.Label, out ib);
+                if (ib == null)
+                    ib = FindSplitBlockOriginal(b.Label, originalBlocks);
                 if (ib == null)
                 {
                     // Such blocks correspond to "itermediate" blocks inserted
