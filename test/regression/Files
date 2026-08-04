@@ -34,3 +34,5 @@ codeexpr\f2.bpl c
 codeexpr\f3.bpl c
 datatype\fassign.bpl b
 datatype\fassign_ok.bpl c
+datatype\unpack.bpl b
+datatype\unpack_ok.bpl c

@@ -483,8 +483,49 @@ namespace cba.Util
                 throw new InvalidProg("Cannot resolve " + filename);
             }
 
+            DesugarUnpackCmds(p);
+
             return p;
         }
+
+        // Replace "C(x, y) := e" with Boogie's own desugaring of it:
+        //   assert is#C(e);  x, y := e->f1, e->f2;
+        // Boogie 3.5.6 added UnpackCmd, and nothing in corral knows about it:
+        // variable slicing rejects the command outright, and the assertion it
+        // carries would never reach RewriteAssertsPass, so a failing unpack could
+        // not be reported. Desugaring as the program is read keeps every later
+        // pass seeing only the commands corral was written against. It belongs
+        // here rather than at one call site because the trace printer re-reads the
+        // input file and lines its commands up with the verified program index by
+        // index; the two views have to expand identically.
+        private static void DesugarUnpackCmds(Program program)
+        {
+            foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+            {
+                foreach (var block in impl.Blocks)
+                {
+                    if (!block.Cmds.OfType<UnpackCmd>().Any())
+                        continue;
+
+                    var newCmds = new List<Cmd>();
+                    foreach (var cmd in block.Cmds)
+                    {
+                        if (cmd is UnpackCmd ucmd &&
+                            ucmd.GetDesugaring(BoogieOptions) is StateCmd desugared)
+                        {
+                            impl.LocVars.AddRange(desugared.Locals);
+                            newCmds.AddRange(desugared.Cmds);
+                        }
+                        else
+                        {
+                            newCmds.Add(cmd);
+                        }
+                    }
+                    block.Cmds = newCmds;
+                }
+            }
+        }
+
         // Prints the program into a file, reads it back in, parses it,
         // resolves it and typechecks it
         public static Program ReResolve(Program p, bool doTypecheck = true)
