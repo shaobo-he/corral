@@ -1025,6 +1025,24 @@ namespace cba
             var newMain = dup.VisitImplementation(origMain);
             var newProc = dup.VisitProcedure(origMain.Proc);
 
+            // Rebind the copy's modifies clause to this program's globals.
+            // StandardVisitor.VisitIdentifierExpr descends into Decl and
+            // MyDuplicator.VisitGlobalVariable clones it, so every entry of the
+            // duplicated clause points at a fresh GlobalVariable rather than the
+            // one declared in the program. Boogie 3.5.6's ModSetCollector
+            // deduplicates by Variable object identity, so leaving them foreign
+            // makes it append a second copy of the whole clause (measured on
+            // bench/bpl-u4: parport_false 59 -> 119 entries, pointers_fail 2 -> 5).
+            // The duplicated body is discarded below, so the modifies clause is
+            // the only part of the copy that outlives this method.
+            var globalsByName = program.TopLevelDeclarations.OfType<GlobalVariable>()
+                .GroupBy(g => g.Name).ToDictionary(g => g.Key, g => g.First());
+            newProc.Modifies = newProc.Modifies
+                .Select(ie => (ie.Decl != null && globalsByName.TryGetValue(ie.Decl.Name, out var g))
+                    ? new IdentifierExpr(ie.tok, g)
+                    : ie)
+                .ToList();
+
             newMain.Name += "_SeqInstr";
             newProc.Name += "_SeqInstr";
             newMain.Proc = newProc;
