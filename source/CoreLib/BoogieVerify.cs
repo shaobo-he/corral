@@ -118,12 +118,6 @@ namespace cba.Util
             // Do loop extraction
             var extractionInfo = program.ExtractLoops();
 
-            // Sort declarations by name so that the stratified inliner explores
-            // procedures in a deterministic order regardless of Boogie's internal
-            // static counter state (which affects how ExtractLoops names loop procs).
-            program.TopLevelDeclarations =
-                program.TopLevelDeclarations.OrderBy(d => (d is NamedDeclaration nd) ? nd.Name : "").ToList();
-
             // restore RB
             CommandLineOptions.Clo.RecursionBound = rb;
 
