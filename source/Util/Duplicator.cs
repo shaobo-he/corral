@@ -138,6 +138,10 @@ namespace cba.Util
         {
             return base.VisitHavocCmd((HavocCmd)node.Clone());
         }
+        public override AssignLhs VisitFieldAssignLhs(FieldAssignLhs node)
+        {
+            return base.VisitFieldAssignLhs((FieldAssignLhs)node.Clone());
+        }
         public override Expr VisitIdentifierExpr(IdentifierExpr node)
         {
             return base.VisitIdentifierExpr((IdentifierExpr)node.Clone());
@@ -235,6 +239,10 @@ namespace cba.Util
         public override Variable VisitVariable(Variable node)
         {
             return node;
+        }
+        public override Cmd VisitUnpackCmd(UnpackCmd node)
+        {
+            return base.VisitUnpackCmd((UnpackCmd)node.Clone());
         }
         public override List<Variable> VisitVariableSeq(List<Variable> variableSeq)
         {

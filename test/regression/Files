@@ -32,3 +32,5 @@ inline\simple.bpl c
 codeexpr\f1.bpl c
 codeexpr\f2.bpl c
 codeexpr\f3.bpl c
+datatype\fassign.bpl b
+datatype\fassign_ok.bpl c
