@@ -269,6 +269,14 @@ namespace cba.Util
                     case VC.VcOutcome.Errors:
                         break;
                     case VC.VcOutcome.Inconclusive:
+                        // Bound exhaustion is a bounded pass; a solver that answered
+                        // "unknown", or a search that could not make progress, is not.
+                        // Boogie 3.5.6 reports all three as Inconclusive because it
+                        // deleted Outcome.ReachedBound, so ask the inliner which it was.
+                        // Reporting the other two as a pass would print "Program has no
+                        // bugs" for a program we never verified; 2.9.1 threw here.
+                        if (!vcgen.ReachedRecursionBound)
+                            throw new InternalError("z3 says inconclusive");
                         ret = ReturnStatus.ReachedBound;
                         break;
                     case VC.VcOutcome.SolverException:

@@ -36,3 +36,4 @@ datatype\fassign.bpl b
 datatype\fassign_ok.bpl c
 datatype\unpack.bpl b
 datatype\unpack_ok.bpl c
+recbound\recbound.bpl c

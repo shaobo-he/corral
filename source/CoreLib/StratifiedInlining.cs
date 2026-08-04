@@ -194,12 +194,20 @@ namespace CoreLib
 
         }
 
+        // Whether the Inconclusive returned by the last Fwd meant "the recursion
+        // bound stopped us" as opposed to "the solver gave up" or "we could not
+        // make progress". Boogie 3.5.6 deleted ConditionGeneration.Outcome.ReachedBound,
+        // so all three now have to travel as Outcome.Inconclusive and the caller
+        // cannot tell them apart from the value alone.
+        public bool ReachedRecursionBound { get; private set; }
+
         public Outcome Fwd(HashSet<StratifiedCallSite> openCallSites, StratifiedInliningErrorReporter reporter, bool main, int recBound)
         {
             Outcome outcome = Outcome.Inconclusive;
 
             ForceInline(openCallSites, recBound);
 
+            ReachedRecursionBound = false;
             var boundHit = false;
             while (true)
             {
@@ -257,7 +265,12 @@ namespace CoreLib
                 if (outcome != Outcome.Errors)
                 {
                     if (boundHit && outcome == Outcome.Correct)
+                    {
+                        // Correct under the current bound, but we stopped short of
+                        // some call sites: a bounded pass, not a solver failure.
                         outcome = Outcome.Inconclusive;
+                        ReachedRecursionBound = true;
+                    }
 
                     break; // done
                 }
