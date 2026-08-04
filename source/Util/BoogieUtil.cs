@@ -57,6 +57,32 @@ namespace cba.Util
                 }
             }
             (new ModSetCollector(BoogieOptions)).CollectModifies(p);
+
+            // Boogie 3.5.6's ModSetCollector appends to each procedure's existing
+            // modifies list, deduplicating by Variable object identity
+            // (Core/Analysis/ModSetCollector.cs). Boogie 2.9.1 instead replaced the
+            // list outright (Core/DeadVarElim.cs), which could not produce duplicates
+            // and also severed any aliasing of the old list. Restore that guarantee:
+            // CallCmd.ComputeDesugaring builds a Dictionary keyed on the modified
+            // variable and throws ArgumentException on a duplicate -- its own comment
+            // records the assumption ("this assumes no duplicates in this.Proc.Modifies").
+            // Duplicates can arrive either from a shared list mutated through two
+            // programs, or straight from the input text, since InferModifies=true
+            // disables the resolver's modifies check.
+            foreach (var proc in p.TopLevelDeclarations.OfType<Procedure>())
+            {
+                if (proc.Modifies == null || proc.Modifies.Count < 2)
+                    continue;
+                var seen = new HashSet<string>();
+                var deduped = new List<IdentifierExpr>();
+                foreach (var ie in proc.Modifies)
+                {
+                    if (seen.Add(ie.Decl != null ? ie.Decl.Name : ie.Name))
+                        deduped.Add(ie);
+                }
+                if (deduped.Count != proc.Modifies.Count)
+                    proc.Modifies = deduped;
+            }
         }
 
         public static void PrintProgram(Program p, string filename)

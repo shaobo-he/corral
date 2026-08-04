@@ -1011,8 +1011,10 @@ namespace cba.Util
                     }
                     else if (tmp.Name == impl.Name)
                     {
+                        // Copy, don't alias -- see the comment in RestrictToTrace.addTraceRec.
                         Procedure pex = new Procedure(Token.NoToken, tmp.Name + "_cex", tmp.TypeParameters, tmp.InParams,
-                            tmp.OutParams, tmp.IsPure, tmp.Requires, tmp.Preserves, tmp.Ensures, tmp.Modifies, tmp.Attributes);
+                            tmp.OutParams, tmp.IsPure, tmp.Requires, tmp.Preserves, tmp.Ensures,
+                            new List<IdentifierExpr>(tmp.Modifies), tmp.Attributes);
                         newProg.AddTopLevelDeclaration(pex);
                     }
                 }

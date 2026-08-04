@@ -119,9 +119,13 @@ namespace cba
             string newName = getNewName(trace.procName);
             Procedure proc = nameToProc[trace.procName];
 
+            // Copy the modifies list rather than aliasing it: Boogie 3.5.6's
+            // ModSetCollector appends to it in place, so a shared list lets modset
+            // inference on this trace program mutate the original procedure's clause.
             output.AddTopLevelDeclaration(
                 new Procedure(Token.NoToken, newName, proc.TypeParameters, proc.InParams,
-                    proc.OutParams, proc.IsPure, proc.Requires, proc.Preserves, proc.Ensures, proc.Modifies,
+                    proc.OutParams, proc.IsPure, proc.Requires, proc.Preserves, proc.Ensures,
+                    new List<IdentifierExpr>(proc.Modifies),
                     proc.Attributes));
 
             // Now to peice together the commands from the implementation. We keep around
