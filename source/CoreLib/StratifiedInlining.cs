@@ -349,19 +349,19 @@ namespace CoreLib
                 .Where(p => BoogieUtil.checkAttrExists(ForceInlineAttr, p.Attributes) || BoogieUtil.checkAttrExists(ForceInlineAttr, p.Proc.Attributes))
                 .Select(p => p.Name));
 
-            // Multicore HYDRA: opt-in only via /set:HydraParallel.
+            // Multicore HYDRA: /hydraWorkers:N (N>1) runs N parallel workers on
+            // deep program clones. Workers never touch this master SI's program.
             //
-            // Cloning a mid-pipeline Corral program for worker SIs still shares
-            // enough AST state that worker GenerateVC/PassifyImpl can corrupt the
-            // master program (false SAFE after "authoritative" sequential). Until
-            // isolation is airtight, the default for hydraWorkers>1 is sequential
-            // HYDRA — correct, same as workers=1.
+            //   Correct / timeout / OOM / inconclusive → return parallel outcome.
+            //   Errors → fall through to sequential HYDRA on this master SI for a
+            //            refinement-compatible CEX (and to filter false UNSAFE).
+            //   Clone/resolve failure → sequential on master (some instrumented
+            //            programs cannot be re-resolved after FixedDuplicator).
             if (cba.Util.BoogieVerify.options.useHydra &&
-                cba.Util.BoogieVerify.options.hydraWorkers > 1 &&
-                cba.Util.BoogieVerify.options.extraFlags.Contains("HydraParallel"))
+                cba.Util.BoogieVerify.options.hydraWorkers > 1)
             {
                 var requestedWorkers = cba.Util.BoogieVerify.options.hydraWorkers;
-                MacroSI.PRINT("HYDRA parallel (experimental): {0} workers", requestedWorkers);
+                MacroSI.PRINT("HYDRA multicore: {0} workers", requestedWorkers);
                 try
                 {
                     var cleanSnap = HydraParallel.CloneProgram(program);
@@ -372,7 +372,8 @@ namespace CoreLib
                             .FirstOrDefault(i =>
                                 QKeyValue.FindAttribute(i.Attributes, a => a.Key == "entrypoint") != null);
                     if (snapEntry == null)
-                        throw new InternalError("HYDRA parallel: entry missing after clone");
+                        throw new InternalError(
+                            "HYDRA multicore: entry '" + impl.Name + "' missing after clone");
 
                     var parOutcome = HydraParallel.Run(
                         cleanSnap, snapEntry, callback,
@@ -384,54 +385,26 @@ namespace CoreLib
                         cba.Util.BoogieVerify.options.extraFlags.Contains("HydraStats"))
                     {
                         Console.WriteLine(
-                            "HYDRA parallel stats: wall={0}ms partitions={1}/{2} splits={3} stolen={4} reconstructed={5} peakWorkers={6} outcome={7}",
+                            "HYDRA multicore stats: wall={0}ms partitions={1}/{2} splits={3} stolen={4} reconstructed={5} peakWorkers={6} outcome={7}",
                             parStats.WallMs, parStats.PartitionsSolved, parStats.PartitionsCreated,
                             parStats.Splits, parStats.StolenPartitions, parStats.ReconstructedPartitions,
                             parStats.PeakWorkers, parOutcome);
                     }
-                    // Do NOT fall through to master sequential: workers may have
-                    // corrupted the master AST. Trust only the parallel outcome, and
-                    // for Errors re-verify with a brand-new SI on a fresh clone.
+
                     if (parOutcome != Outcome.Errors)
                         return parOutcome;
 
-                    MacroSI.PRINT("HYDRA parallel found bug; CEX via fresh sequential SI");
-                    var cexProg = HydraParallel.CloneProgram(cleanSnap);
-                    var cexImpl =
-                        cexProg.TopLevelDeclarations.OfType<Implementation>()
-                            .First(i => i.Name == snapEntry.Name);
-                    var cexSi = new StratifiedInlining(cexProg, null, false, null);
-                    try
-                    {
-                        var savedW = cba.Util.BoogieVerify.options.hydraWorkers;
-                        var savedFlags = new HashSet<string>(cba.Util.BoogieVerify.options.extraFlags);
-                        cba.Util.BoogieVerify.options.hydraWorkers = 1;
-                        cba.Util.BoogieVerify.options.extraFlags.Remove("HydraParallel");
-                        cba.Util.BoogieVerify.options.useHydra = true;
-                        cba.Util.BoogieVerify.options.useDI = true;
-                        var cexRun = new ImplementationRun(cexImpl, TextWriter.Null);
-                        var cexOut = cexSi.VerifyImplementation(cexRun, callback, cancellationToken)
-                            .GetAwaiter().GetResult();
-                        cba.Util.BoogieVerify.options.hydraWorkers = savedW;
-                        cba.Util.BoogieVerify.options.extraFlags = savedFlags;
-                        // If sequential on clone cannot reproduce the bug, do not claim UNSAFE.
-                        return cexOut;
-                    }
-                    finally { cexSi.Close(); }
+                    // Confirm + CEX on master (workers only mutated clones).
+                    MacroSI.PRINT("HYDRA multicore found bug; sequential CEX on master SI");
                 }
                 catch (Exception ex)
                 {
-                    MacroSI.PRINT("HYDRA parallel failed ({0}); sequential on master", ex.Message);
-                    cba.Util.BoogieVerify.options.hydraWorkers = 1;
-                    cba.Util.BoogieVerify.options.extraFlags.Remove("HydraParallel");
+                    // Some instrumented programs cannot be re-resolved after clone;
+                    // fall back to sequential rather than aborting verification.
+                    MacroSI.PRINT("HYDRA multicore unavailable ({0}); using sequential",
+                        ex.Message);
                 }
-            }
-            else if (cba.Util.BoogieVerify.options.useHydra &&
-                     cba.Util.BoogieVerify.options.hydraWorkers > 1)
-            {
-                MacroSI.PRINT(
-                    "HYDRA: hydraWorkers={0} → sequential (enable experimental parallel with /set:HydraParallel)",
-                    cba.Util.BoogieVerify.options.hydraWorkers);
+                // Sequential path below (CEX confirm or clone-failure fallback).
                 cba.Util.BoogieVerify.options.hydraWorkers = 1;
             }
 

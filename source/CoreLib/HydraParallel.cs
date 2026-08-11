@@ -374,22 +374,38 @@ namespace CoreLib
 
         /// <summary>
         /// Isolated program copy for HYDRA workers.
-        /// FixedDuplicator(false) nulls Proc links so Resolve rebinds inside the clone.
-        /// Critically, Procedure.Clone() still aliases Modifies lists — under Boogie 3.5.6
-        /// ModSetCollector appends in place, which would corrupt the seed and produce
-        /// false bugs. Deep-copy every Modifies list after duplication.
+        ///
+        /// FixedDuplicator(false) nulls CallCmd.Proc so Resolve rebinds callees inside
+        /// the clone. We also must:
+        ///   - deep-copy Procedure.Modifies (Procedure.Clone aliases the list; Boogie
+        ///     3.5.6 ModSetCollector appends in place and would corrupt the seed);
+        ///   - null GotoCmd.LabelTargets so Resolve rebuilds them from LabelNames
+        ///     (otherwise successors still point at seed blocks and SIBoolControlVC
+        ///     trace construction KeyNotFound-crashes / yields false bugs).
         /// </summary>
         public static Program CloneProgram(Program p)
         {
             var dup = new FixedDuplicator(/* retainProcCalls */ false);
             var ret = dup.VisitProgram(p);
 
-            // Sever Modifies aliasing introduced by Procedure.Clone().
             foreach (var proc in ret.TopLevelDeclarations.OfType<Procedure>())
             {
                 if (proc.Modifies == null) continue;
                 proc.Modifies = new List<IdentifierExpr>(
                     proc.Modifies.Select(ie => new IdentifierExpr(ie.tok, ie.Name)));
+            }
+
+            foreach (var impl in ret.TopLevelDeclarations.OfType<Implementation>())
+            {
+                if (impl.Blocks == null) continue;
+                foreach (var block in impl.Blocks)
+                {
+                    if (block.TransferCmd is GotoCmd gc)
+                    {
+                        // Force Resolve to rebuild LabelTargets from LabelNames.
+                        gc.LabelTargets = null;
+                    }
+                }
             }
 
             var err = BoogieUtil.ResolveProgram(ret);
