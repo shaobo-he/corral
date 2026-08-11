@@ -232,6 +232,12 @@ namespace cba
             progVerifyOptions.SIBoolControlVC = true;
             progVerifyOptions.UseProverEvaluate = true;
             progVerifyOptions.StratifiedInliningWithoutModels = true;
+            // DAG inlining / HYDRA apply to program verification only; path and
+            // refinement queries keep plain tree inlining.
+            progVerifyOptions.useDI = config.useDI;
+            progVerifyOptions.useHydra = config.useHydra;
+            progVerifyOptions.hydraWorkers = config.hydraWorkers;
+            progVerifyOptions.extraFlags.UnionWith(config.extraFlags);
 
             // Path
             pathVerifyOptions = new BoogieVerifyOptions();

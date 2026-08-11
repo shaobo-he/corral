@@ -42,3 +42,9 @@ irreducible\irred_nocall.bpl b
 dupmodifies\dup.bpl b
 dupmodifies\entrydup.bpl b
 dupmodifies\stubdup.bpl b
+hydra\bug_reach.bpl b
+hydra\bug_avoid.bpl b
+hydra\both_safe.bpl c
+hydra\nested.bpl b
+hydra\rec.bpl c
+hydra\multi_ctx.bpl c

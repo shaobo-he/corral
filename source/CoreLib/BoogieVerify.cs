@@ -790,6 +790,23 @@ namespace cba.Util
         // Extended API
         public Dictionary<string, int> extraRecBound;
 
+        // Use DAG inlining: merge call sites onto an existing VC where the
+        // inlining tree would otherwise grow a duplicate subtree.
+        public bool useDI;
+
+        // Sequential HYDRA-style partitioned SI search. Prefer with /di.
+        public bool useHydra;
+
+        // Local multicore worker count for HYDRA (1 = sequential). Reserved for
+        // the parallel scheduler; sequential path ignores values > 1 until
+        // multicore HYDRA is wired up.
+        public int hydraWorkers;
+
+        // Knobs for DAG inlining / HYDRA, set via /set:<name>. Recognised DI names
+        // are DiNone, DiRandom, DiRandomPick, DiMaxc, DiOpt, DiCheckSanity, DumpDag.
+        // HYDRA: HydraStats.
+        public HashSet<string> extraFlags;
+
         // Default options
         public BoogieVerifyOptions()
         {
@@ -800,6 +817,10 @@ namespace cba.Util
             SIBoolControlVC = true;
             ModelViewFile = null;
             extraRecBound = new Dictionary<string, int>();
+            useDI = false;
+            useHydra = false;
+            hydraWorkers = 1;
+            extraFlags = new HashSet<string>();
         }
 
         public BoogieVerifyOptions Copy()
@@ -816,6 +837,10 @@ namespace cba.Util
             ret.SIBoolControlVC = SIBoolControlVC;
             ret.ModelViewFile = ModelViewFile;
             ret.extraRecBound = new Dictionary<string, int>(extraRecBound);
+            ret.useDI = useDI;
+            ret.useHydra = useHydra;
+            ret.hydraWorkers = hydraWorkers;
+            ret.extraFlags.UnionWith(extraFlags);
 
             return ret;
         }

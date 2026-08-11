@@ -27,6 +27,10 @@ namespace cba
             Console.WriteLine(" /maxStaticLoopBound:n\t Upper bound on minimum loop iterations");
             Console.WriteLine(" /tryCTrace         \t Generate C-style error trace");
             Console.WriteLine(" /noTraceOnDisk     \t Don't write trace files to disk");
+            Console.WriteLine(" /di                \t Use DAG inlining");
+            Console.WriteLine(" /hydra             \t HYDRA partitioned SI search (enables /di)");
+            Console.WriteLine(" /hydraWorkers:n    \t Local workers (default 1; N>1 needs /set:HydraMulticore)");
+            Console.WriteLine(" /set:str           \t DI/HYDRA knobs: DiRandom, DiMaxc, HydraStats, HydraMulticore, ...");
             Console.WriteLine(" /printDataValues:n \t Print data values in trace");
             Console.WriteLine(" /v:n               \t Verbose mode level");
             Console.WriteLine(" /bopt:str          \t Pass-through options to Boogie");
@@ -62,6 +66,18 @@ namespace cba
         public int NumCex { get; private set; }
 
         public int verboseMode { get; private set; }
+
+        // Use DAG inlining during program verification
+        public bool useDI { get; private set; }
+
+        // HYDRA partitioned SI search
+        public bool useHydra { get; private set; }
+
+        // Local HYDRA worker count (1 = sequential)
+        public int hydraWorkers { get; private set; }
+
+        // Knobs for DAG inlining / HYDRA, given as /set:<name>
+        public HashSet<string> extraFlags { get; private set; }
 
         public static Configs parseCommandLine(string[] args)
         {
@@ -146,6 +162,11 @@ namespace cba
             useProverEvaluate = false;
 
             NumCex = 1;
+
+            useDI = false;
+            useHydra = false;
+            hydraWorkers = 1;
+            extraFlags = new HashSet<string>();
         }
 
 
@@ -204,6 +225,30 @@ namespace cba
             else if (flag == "/tryCTrace")
             {
                 genCTrace = TraceFormat.ConcurrencyExplorer;
+            }
+            else if (flag == "/di")
+            {
+                useDI = true;
+            }
+            else if (flag == "/hydra")
+            {
+                useHydra = true;
+                // HYDRA split selection uses the DI DAG; enable DI unless the
+                // user explicitly wants tree-only partitioning later.
+                useDI = true;
+            }
+            else if (flag.StartsWith("/hydraWorkers:"))
+            {
+                var split = flag.Split(sep);
+                hydraWorkers = Int32.Parse(split[1]);
+                if (hydraWorkers < 1) hydraWorkers = 1;
+                useHydra = true;
+                useDI = true;
+            }
+            else if (flag.StartsWith("/set:"))
+            {
+                var split = flag.Split(sep);
+                extraFlags.Add(split[1]);
             }
             else if (flag == "/noTraceOnDisk")
             {
