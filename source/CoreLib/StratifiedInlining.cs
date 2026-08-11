@@ -349,51 +349,90 @@ namespace CoreLib
                 .Where(p => BoogieUtil.checkAttrExists(ForceInlineAttr, p.Attributes) || BoogieUtil.checkAttrExists(ForceInlineAttr, p.Proc.Attributes))
                 .Select(p => p.Name));
 
-            // Multicore HYDRA is available but opt-in: partition reconstruction can
-            // still miss bugs (false SAFE) on some programs. Sequential HYDRA is the
-            // correctness baseline. Enable experimental multicore with:
-            //   /hydraWorkers:N /set:HydraMulticore
-            // On Errors, fall through to sequential for a master-program CEX.
+            // Multicore HYDRA: opt-in only via /set:HydraParallel.
+            //
+            // Cloning a mid-pipeline Corral program for worker SIs still shares
+            // enough AST state that worker GenerateVC/PassifyImpl can corrupt the
+            // master program (false SAFE after "authoritative" sequential). Until
+            // isolation is airtight, the default for hydraWorkers>1 is sequential
+            // HYDRA — correct, same as workers=1.
             if (cba.Util.BoogieVerify.options.useHydra &&
                 cba.Util.BoogieVerify.options.hydraWorkers > 1 &&
-                cba.Util.BoogieVerify.options.extraFlags.Contains("HydraMulticore"))
+                cba.Util.BoogieVerify.options.extraFlags.Contains("HydraParallel"))
             {
-                MacroSI.PRINT("HYDRA multicore (experimental): {0} workers", cba.Util.BoogieVerify.options.hydraWorkers);
-                var parOutcome = HydraParallel.Run(
-                    program, impl, callback,
-                    cba.Util.BoogieVerify.options.hydraWorkers,
-                    BoogieUtil.RecursionBound,
-                    cancellationToken,
-                    out var parStats);
-                if (StratifiedInliningVerbose > 0 ||
-                    cba.Util.BoogieVerify.options.extraFlags.Contains("HydraStats"))
+                var requestedWorkers = cba.Util.BoogieVerify.options.hydraWorkers;
+                MacroSI.PRINT("HYDRA parallel (experimental): {0} workers", requestedWorkers);
+                try
                 {
-                    Console.WriteLine(
-                        "HYDRA multicore stats: wall={0}ms partitions={1}/{2} splits={3} stolen={4} reconstructed={5} peakWorkers={6}",
-                        parStats.WallMs, parStats.PartitionsSolved, parStats.PartitionsCreated,
-                        parStats.Splits, parStats.StolenPartitions, parStats.ReconstructedPartitions,
-                        parStats.PeakWorkers);
+                    var cleanSnap = HydraParallel.CloneProgram(program);
+                    var snapEntry =
+                        cleanSnap.TopLevelDeclarations.OfType<Implementation>()
+                            .FirstOrDefault(i => i.Name == impl.Name)
+                        ?? cleanSnap.TopLevelDeclarations.OfType<Implementation>()
+                            .FirstOrDefault(i =>
+                                QKeyValue.FindAttribute(i.Attributes, a => a.Key == "entrypoint") != null);
+                    if (snapEntry == null)
+                        throw new InternalError("HYDRA parallel: entry missing after clone");
+
+                    var parOutcome = HydraParallel.Run(
+                        cleanSnap, snapEntry, callback,
+                        requestedWorkers,
+                        BoogieUtil.RecursionBound,
+                        cancellationToken,
+                        out var parStats);
+                    if (StratifiedInliningVerbose > 0 ||
+                        cba.Util.BoogieVerify.options.extraFlags.Contains("HydraStats"))
+                    {
+                        Console.WriteLine(
+                            "HYDRA parallel stats: wall={0}ms partitions={1}/{2} splits={3} stolen={4} reconstructed={5} peakWorkers={6} outcome={7}",
+                            parStats.WallMs, parStats.PartitionsSolved, parStats.PartitionsCreated,
+                            parStats.Splits, parStats.StolenPartitions, parStats.ReconstructedPartitions,
+                            parStats.PeakWorkers, parOutcome);
+                    }
+                    // Do NOT fall through to master sequential: workers may have
+                    // corrupted the master AST. Trust only the parallel outcome, and
+                    // for Errors re-verify with a brand-new SI on a fresh clone.
+                    if (parOutcome != Outcome.Errors)
+                        return parOutcome;
+
+                    MacroSI.PRINT("HYDRA parallel found bug; CEX via fresh sequential SI");
+                    var cexProg = HydraParallel.CloneProgram(cleanSnap);
+                    var cexImpl =
+                        cexProg.TopLevelDeclarations.OfType<Implementation>()
+                            .First(i => i.Name == snapEntry.Name);
+                    var cexSi = new StratifiedInlining(cexProg, null, false, null);
+                    try
+                    {
+                        var savedW = cba.Util.BoogieVerify.options.hydraWorkers;
+                        var savedFlags = new HashSet<string>(cba.Util.BoogieVerify.options.extraFlags);
+                        cba.Util.BoogieVerify.options.hydraWorkers = 1;
+                        cba.Util.BoogieVerify.options.extraFlags.Remove("HydraParallel");
+                        cba.Util.BoogieVerify.options.useHydra = true;
+                        cba.Util.BoogieVerify.options.useDI = true;
+                        var cexRun = new ImplementationRun(cexImpl, TextWriter.Null);
+                        var cexOut = cexSi.VerifyImplementation(cexRun, callback, cancellationToken)
+                            .GetAwaiter().GetResult();
+                        cba.Util.BoogieVerify.options.hydraWorkers = savedW;
+                        cba.Util.BoogieVerify.options.extraFlags = savedFlags;
+                        // If sequential on clone cannot reproduce the bug, do not claim UNSAFE.
+                        return cexOut;
+                    }
+                    finally { cexSi.Close(); }
                 }
-                if (parOutcome == Outcome.Correct ||
-                    parOutcome == Outcome.TimedOut ||
-                    parOutcome == Outcome.OutOfMemory ||
-                    parOutcome == Outcome.OutOfResource)
+                catch (Exception ex)
                 {
-                    return parOutcome;
+                    MacroSI.PRINT("HYDRA parallel failed ({0}); sequential on master", ex.Message);
+                    cba.Util.BoogieVerify.options.hydraWorkers = 1;
+                    cba.Util.BoogieVerify.options.extraFlags.Remove("HydraParallel");
                 }
-                if (parOutcome == Outcome.Inconclusive)
-                {
-                    // Do NOT set ReachedRecursionBound: unfinished/unknown work is not a bounded pass.
-                    return parOutcome;
-                }
-                MacroSI.PRINT("HYDRA multicore found bug; re-running sequential for CEX");
             }
             else if (cba.Util.BoogieVerify.options.useHydra &&
                      cba.Util.BoogieVerify.options.hydraWorkers > 1)
             {
                 MacroSI.PRINT(
-                    "HYDRA: hydraWorkers={0}; running sequential (experimental multicore: /set:HydraMulticore)",
+                    "HYDRA: hydraWorkers={0} → sequential (enable experimental parallel with /set:HydraParallel)",
                     cba.Util.BoogieVerify.options.hydraWorkers);
+                cba.Util.BoogieVerify.options.hydraWorkers = 1;
             }
 
             // assert true to flush all one-time axioms, decls, etc
@@ -1475,8 +1514,17 @@ namespace CoreLib
         public HashSet<StratifiedVC> DisjointNodes(StratifiedVC vc)
         {
             var ret = new HashSet<StratifiedVC>();
+            if (!vcNodeMap.ContainsDomain(vc))
+                return ret;
             var disj = currentDag.AllDisjointNodes();
-            disj[vcNodeMap[vc]].Iter(n => ret.Add(vcNodeMap[n]));
+            var node = vcNodeMap[vc];
+            if (!disj.ContainsKey(node))
+                return ret;
+            disj[node].Iter(n =>
+            {
+                if (vcNodeMap.ContainsRange(n))
+                    ret.Add(vcNodeMap[n]);
+            });
             return ret;
         }
 
@@ -1856,6 +1904,11 @@ namespace CoreLib
 
         public bool IsExclusive(string impl, int n1, int n2)
         {
+            // After program cloning, exclusive-pair tables are keyed by implementation
+            // names present at DI construction. Missing names are treated as non-exclusive
+            // (safe over-approx: fewer merges / fewer DI prunes, not false SAFE).
+            if (impl == null || !impls.ContainsKey(impl))
+                return false;
             return IsExclusive(impls[impl], n1, n2);
         }
 

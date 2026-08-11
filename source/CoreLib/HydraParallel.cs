@@ -10,6 +10,7 @@ using Microsoft.Boogie.VCExprAST;
 using VC;
 using Outcome = VC.VcOutcome;
 using cba.Util;
+using ProgTransformation;
 
 namespace CoreLib
 {
@@ -150,7 +151,7 @@ namespace CoreLib
             BoogieVerify.options.hydraWorkers = savedWorkers;
 
             if (shared.WorkerError != null)
-                throw new InternalError("HYDRA worker failed: " + shared.WorkerError.Message);
+                throw new InternalError("HYDRA worker failed: " + shared.WorkerError);
 
             // Fail closed: unfinished work must never become SAFE.
             if (Volatile.Read(ref acct.Pending) != 0 || Volatile.Read(ref acct.Active) != 0)
@@ -176,6 +177,14 @@ namespace CoreLib
             public int Pending;
             public int Active;
         }
+
+        /// <summary>VerifierCallback that ignores CEX (workers report verdict only).</summary>
+        sealed class DiscardingVerifierCallback : VerifierCallback
+        {
+            public DiscardingVerifierCallback() : base(CoreOptions.ProverWarnings.None) { }
+            public override void OnCounterexample(Counterexample ce, string reason) { }
+        }
+
 
         sealed class SharedResult
         {
@@ -344,7 +353,11 @@ namespace CoreLib
                     if (!channel.Writer.TryWrite(sibling))
                         Interlocked.Decrement(ref acct.Pending);
                 };
-                return si.SolveHydraPartition(entryClone, callback, partition, recBound, workerId,
+                // Discard worker CEX traces: they are rooted in cloned programs and
+                // poison Corral's loop-trace mapping / refinement. Verdict only;
+                // real CEX is produced by sequential re-run on a clean clone.
+                var workerCb = new DiscardingVerifierCallback();
+                return si.SolveHydraPartition(entryClone, workerCb, partition, recBound, workerId,
                     publisher,
                     () => !channel.Reader.TryPeek(out _),
                     stats,
@@ -360,16 +373,33 @@ namespace CoreLib
         }
 
         /// <summary>
-        /// Deep-copy a resolved program and rebind Proc links cleared by FixedDuplicator.
+        /// Isolated program copy for HYDRA workers.
+        /// FixedDuplicator(false) nulls Proc links so Resolve rebinds inside the clone.
+        /// Critically, Procedure.Clone() still aliases Modifies lists — under Boogie 3.5.6
+        /// ModSetCollector appends in place, which would corrupt the seed and produce
+        /// false bugs. Deep-copy every Modifies list after duplication.
         /// </summary>
         public static Program CloneProgram(Program p)
         {
-            var dup = new FixedDuplicator(true);
+            var dup = new FixedDuplicator(/* retainProcCalls */ false);
             var ret = dup.VisitProgram(p);
-            if (BoogieUtil.ResolveProgram(ret) != 0)
-                throw new InternalError("HYDRA: failed to resolve cloned program");
-            if (BoogieUtil.TypecheckProgram(ret) != 0)
-                throw new InternalError("HYDRA: failed to typecheck cloned program");
+
+            // Sever Modifies aliasing introduced by Procedure.Clone().
+            foreach (var proc in ret.TopLevelDeclarations.OfType<Procedure>())
+            {
+                if (proc.Modifies == null) continue;
+                proc.Modifies = new List<IdentifierExpr>(
+                    proc.Modifies.Select(ie => new IdentifierExpr(ie.tok, ie.Name)));
+            }
+
+            var err = BoogieUtil.ResolveProgram(ret);
+            if (err != 0)
+                throw new InternalError("HYDRA: failed to resolve cloned program (" + err + " errors)");
+            err = BoogieUtil.TypecheckProgram(ret);
+            if (err != 0)
+                throw new InternalError("HYDRA: failed to typecheck cloned program (" + err + " errors)");
+            if (!ret.TopLevelDeclarations.OfType<Implementation>().Any())
+                throw new InternalError("HYDRA: clone produced zero implementations");
             return ret;
         }
     }

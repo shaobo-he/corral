@@ -29,8 +29,8 @@ namespace cba
             Console.WriteLine(" /noTraceOnDisk     \t Don't write trace files to disk");
             Console.WriteLine(" /di                \t Use DAG inlining");
             Console.WriteLine(" /hydra             \t HYDRA partitioned SI search (enables /di)");
-            Console.WriteLine(" /hydraWorkers:n    \t Local workers (default 1; N>1 needs /set:HydraMulticore)");
-            Console.WriteLine(" /set:str           \t DI/HYDRA knobs: DiRandom, DiMaxc, HydraStats, HydraMulticore, ...");
+            Console.WriteLine(" /hydraWorkers:n    \t Worker count (default 1; N>1 needs /set:HydraParallel)");
+            Console.WriteLine(" /set:str           \t DI/HYDRA knobs: DiRandom, DiMaxc, HydraStats, HydraParallel, ...");
             Console.WriteLine(" /printDataValues:n \t Print data values in trace");
             Console.WriteLine(" /v:n               \t Verbose mode level");
             Console.WriteLine(" /bopt:str          \t Pass-through options to Boogie");
