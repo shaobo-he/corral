@@ -34,9 +34,17 @@ jobs:
           dotnet tool restore
           # Build Corral
           dotnet build -c ${{ matrix.configuration }} ${SOLUTION}
+      - name: Test HYDRA outcome aggregation
+        run: >-
+          dotnet run -c ${{ matrix.configuration }}
+          --project test/unit/HydraOutcomeTests/HydraOutcomeTests.csproj
       - name: Test Corral
         run: |
           export PATH="$(find $PWD/z3* -name bin -type d):$PATH"
           cd $GITHUB_WORKSPACE
           export CONFIGURATION=${{ matrix.configuration }}
           (cd test/regression && perl check.pl)
+          (cd test/regression && perl check.pl /di)
+          (cd test/regression && perl check.pl hydra /hydraWorkers:1)
+          (cd test/regression && perl check.pl hydra /hydraWorkers:2)
+          (cd test/regression && perl check.pl hydra /hydraWorkers:4)

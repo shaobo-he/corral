@@ -94,11 +94,21 @@ namespace cba
     {
         private static int counter = 0;
         public static bool useGlobalCounter = true;
+        private readonly bool useDeterministicCounter;
+        private int deterministicCounter;
         // (caller, callee, int) -> (block label, cnt)
         public Dictionary<Tuple<string, string, int>, Tuple<string, int>> callIdToLocation;
 
-        public AddUniqueCallIds()
+        public AddUniqueCallIds() : this(false)
         {
+        }
+
+        // An instance-local counter makes IDs stable when the same transformed
+        // program is reconstructed by independent HYDRA workers.
+        public AddUniqueCallIds(bool useDeterministicCounter)
+        {
+            this.useDeterministicCounter = useDeterministicCounter;
+            deterministicCounter = 0;
             callIdToLocation = new Dictionary<Tuple<string, string, int>, Tuple<string, int>>();
         }
 
@@ -110,6 +120,26 @@ namespace cba
 
         public void VisitImplementation(Implementation impl)
         {
+            // Reducibility conversion can place the same CallCmd object in more
+            // than one split block. Separate those occurrences before changing
+            // attributes, otherwise assigning a new ID to one changes all copies.
+            if (useDeterministicCounter)
+            {
+                var seenCalls = new HashSet<CallCmd>();
+                var duplicator = new FixedDuplicator(true);
+                foreach (var block in impl.Blocks)
+                {
+                    for (int i = 0; i < block.Cmds.Count; i++)
+                    {
+                        if (block.Cmds[i] is not CallCmd call)
+                            continue;
+                        if (seenCalls.Add(call))
+                            continue;
+                        block.Cmds[i] = duplicator.VisitCallCmd(call);
+                    }
+                }
+            }
+
             // callee -> id
             var cnt = new Dictionary<string, int>();
 
@@ -124,7 +154,9 @@ namespace cba
                     if (!cnt.ContainsKey(cc.callee))
                         cnt[cc.callee] = 0;
 
-                    var uniqueId = useGlobalCounter ? counter : cnt[cc.callee];
+                    var uniqueId = useDeterministicCounter
+                        ? deterministicCounter
+                        : (useGlobalCounter ? counter : cnt[cc.callee]);
                     var attr = new List<object>();
                     attr.Add(new LiteralExpr(Token.NoToken, Microsoft.BaseTypes.BigNum.FromInt(uniqueId)));
 
@@ -146,7 +178,10 @@ namespace cba
                     cnt[cc.callee]++;
 
                     callcnt++;
-                    counter++;
+                    if (useDeterministicCounter)
+                        deterministicCounter++;
+                    else
+                        counter++;
                 }
             }
 

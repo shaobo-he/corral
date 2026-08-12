@@ -19,7 +19,7 @@ my $numArgs = $#ARGV + 1;
 
 my $dirsGiven = 0;
 my $flags = "";
-my @dirs = ("");
+my @dirs = ();
 
 for(my $cnt = 0; $cnt < $numArgs; $cnt++) {
     #print substr($ARGV[$cnt],0,1);
@@ -27,15 +27,29 @@ for(my $cnt = 0; $cnt < $numArgs; $cnt++) {
        $flags = "$flags $ARGV[$cnt]";
     } else {
        $dirsGiven = 1;
-       unshift(@dirs, "$ARGV[$cnt]\\\\");
+       my $dir = $ARGV[$cnt];
+       $dir =~ s{\\}{/}g;
+       $dir =~ s{/+$}{};
+       push(@dirs, "$dir/");
     }
 }
 
+my $testsRun = 0;
 foreach my $line (@files) {
     chomp $line;
 
-    # Spilt into file name and expected output
-    my ($file, $out) = split(/ +/, $line);
+    # Split into file name, expected output, and optional per-test flags.
+    my ($file, $out, @testFlags) = split(/ +/, $line);
+    my @expectedPatterns;
+    my @corralFlags;
+    foreach my $testFlag (@testFlags) {
+        if($testFlag =~ /^EXPECT:(.+)$/) {
+            push(@expectedPatterns, $1);
+        } else {
+            push(@corralFlags, $testFlag);
+        }
+    }
+    my $testFlags = join(' ', @corralFlags);
 
     $file =~ s{\\}{/}g;
 
@@ -46,19 +60,17 @@ foreach my $line (@files) {
 
     # if target directories have been given, ignore other directories
     if($dirsGiven) {
-	my $found = 0;
-	for(my $cnt = 0; $cnt < $#dirs; $cnt++) {
-	    my $dir = $dirs[$cnt];
-	    #print $dir; print "\n";
-	    #print $file; print "\n";
-            if($file =~ m/^$dir/) {
-		    $found = 1;
-	    }
-	}
-	if($found == 0) {
-		next;
-	}
+        my $found = 0;
+        foreach my $dir (@dirs) {
+            if(index($file, $dir) == 0) {
+                $found = 1;
+                last;
+            }
+        }
+        next if !$found;
     }
+
+    $testsRun++;
 
     # get directory name from the file name
     my $dir = dirname($file);
@@ -86,13 +98,18 @@ foreach my $line (@files) {
     my $configPath = 'config';
     my $filePath = basename($file);
     my $outputPath = File::Spec->catfile(cwd(), 'out');
-    my $cmd = join(' ', $corralPath, $filePath, "/flags:$configPath", $flags, '>', $outputPath);
+    my $cmd = join(' ', $corralPath, $filePath, "/flags:$configPath", $flags, $testFlags, '>', $outputPath);
     print $cmd; print "\n";
+    my $commandStatus;
     {
         my $wd = cwd();
         chdir $dir;
-        system($cmd);
+        $commandStatus = system($cmd);
         chdir $wd;
+    }
+    if ($commandStatus != 0) {
+        my $exitCode = $commandStatus == -1 ? -1 : ($commandStatus >> 8);
+        die "Corral failed for $file (exit $exitCode)\n";
     }
 
     # Check result
@@ -105,25 +122,35 @@ foreach my $line (@files) {
 
     if($out eq "c") {
 	    @correct = grep (/^Program has no bugs/, @res);
-	    if($correct[0] =~ m/^Program has no bugs/) {
+	    if(@correct && $correct[0] =~ m/^Program has no bugs/) {
 		    $ok = 1;
 	    } else {
 		    $ok = 0;
 	    }
     } else {
 	    @correct = grep (/^Program has a potential bug: True bug/, @res);
-	    if($correct[0] =~ m/^Program has a potential bug: True bug/) {
+	    if(@correct && $correct[0] =~ m/^Program has a potential bug: True bug/) {
 		    $ok = 1;
 	    } else {
 		    $ok = 0;
 	    }
     }
 
+    foreach my $expectedPattern (@expectedPatterns) {
+        my @matches = grep (/$expectedPattern/, @res);
+        if(!@matches) {
+            print "Missing expected output pattern '$expectedPattern'\n";
+            $ok = 0;
+        }
+    }
+
     if($ok == 0) {
-	    print $correct[0];
+	    print $correct[0] if @correct;
 	    die "Test $file failed\n";
     } else {
 	    print $correct[0];
 	    print "Test passed\n";
     }
 }
+
+die "No regression tests matched the requested directories\n" if $testsRun == 0;

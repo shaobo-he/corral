@@ -105,15 +105,28 @@ namespace cba.Util
                 }
             }
 
+            // Capture a round-trippable seed before RemoveAsserts and LoopExtractor.
+            // Boogie 3.5.6 leaves expression-valued branch attributes referring to
+            // caller locals after loop extraction; such an AST is valid in memory
+            // but cannot be emitted and reparsed for a worker.
+            options.Set();
+            Program hydraWorkerSeed = null;
+            if (options.useHydra && options.hydraWorkers > 1)
+            {
+                hydraWorkerSeed = CoreLib.HydraParallel.CloneProgram(program);
+            }
+
             if (removeAsserts)
                 RemoveAsserts(program);
-
-            // Set options
-            options.Set();
 
             // Extract loops into recursive procedures before VCGen. With
             // SIBoolControlVC, passification assumes an acyclic block graph.
             var extractionInfo = LoopExtractor.ExtractLoops(BoogieUtil.BoogieOptions, program);
+
+            // Making an irreducible CFG reducible can duplicate annotated calls.
+            // Reassign stable, globally unique IDs on the final CFG; the previous
+            // semantic ID remains available as si_old_unique_call.
+            new AddUniqueCallIds(true).VisitProgram(program);
             BoogieUtil.ResolveProgram(program);
             BoogieUtil.TypecheckProgram(program);
 
@@ -202,17 +215,20 @@ namespace cba.Util
                 .OfType<Implementation>()
                 .Where(impl => QKeyValue.FindAttribute(impl.Attributes, attr => attr.Key == "entrypoint") != null));
 
-
             CoreLib.StratifiedInlining vcgen = null;
             try
             {
                 Debug.Assert(BoogieUtil.BoogieOptions.StratifiedInlining > 0);
                 vcgen = new CoreLib.StratifiedInlining(program, BoogieUtil.BoogieOptions.ProverLogFilePath, BoogieUtil.BoogieOptions.ProverLogFileAppend, null);
+                vcgen.SetHydraWorkerSeed(hydraWorkerSeed);
             }
             catch (ProverException e)
             {
                 Log.WriteLine(Log.Error, "ProverException: {0}", e.Message);
-                return ReturnStatus.OK;
+                // A prover that could not be started has not established safety.
+                // Propagate this as a hard verification failure so callers cannot
+                // print "Program has no bugs" for an unchecked program.
+                throw new InternalError("Unable to start prover: " + e.Message);
             }
 
             if (!mains.Any())
@@ -355,6 +371,72 @@ namespace cba.Util
             BoogieUtil.BoogieOptions.TheProverFactory.Close();
 
             return ret;
+        }
+
+        // Prepare an independent worker from the round-trippable pre-loop seed.
+        // This mirrors the master preprocessing but deliberately does not emit the
+        // post-LoopExtractor AST: Boogie 3.5.6 leaves branchcond attribute operands
+        // in caller scope, so that representation is not reparsable.
+        internal static void PrepareHydraWorkerProgram(Program program)
+        {
+            if (removeAsserts)
+                RemoveAsserts(program);
+            options.Set();
+            LoopExtractor.ExtractLoops(BoogieUtil.BoogieOptions, program);
+            new AddUniqueCallIds(true).VisitProgram(program);
+            if (BoogieUtil.ResolveProgram(program) != 0)
+                throw new InternalError("HYDRA worker preprocessing could not resolve");
+            if (BoogieUtil.TypecheckProgram(program) != 0)
+                throw new InternalError("HYDRA worker preprocessing could not typecheck");
+
+            var changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var impl in program.TopLevelDeclarations.OfType<Implementation>())
+                {
+                    if (impl.Proc is not LoopProcedure)
+                        continue;
+
+                    var existingMods = new HashSet<string>(
+                        impl.Proc.Modifies.Select(ie => ie.Decl.Name));
+                    var newMods = new HashSet<string>();
+                    foreach (var blk in impl.Blocks)
+                    {
+                        foreach (var cmd in blk.Cmds.OfType<CallCmd>())
+                        {
+                            if (cmd.Proc == null)
+                                continue;
+                            foreach (var ie in cmd.Proc.Modifies)
+                            {
+                                if (!existingMods.Contains(ie.Decl.Name))
+                                    newMods.Add(ie.Decl.Name);
+                            }
+                        }
+                    }
+
+                    if (newMods.Count == 0)
+                        continue;
+                    foreach (var gv in program.TopLevelDeclarations.OfType<GlobalVariable>())
+                    {
+                        if (newMods.Contains(gv.Name))
+                            impl.Proc.Modifies.Add(new IdentifierExpr(Token.NoToken, gv));
+                    }
+                    changed = true;
+                }
+            }
+
+            if (options.extraRecBound != null)
+            {
+                options.extraRecBound.Iter(tup =>
+                {
+                    var impl = BoogieUtil.findProcedureImpl(
+                        program.TopLevelDeclarations, tup.Key);
+                    if (impl != null)
+                        impl.AddAttribute(BoogieVerify.ExtraRecBoundAttr,
+                            Expr.Literal(tup.Value));
+                });
+            }
         }
 
         private class BoogieVerifyCallback : VerifierCallback
@@ -547,10 +629,10 @@ namespace cba.Util
             {
                 vcgen = new CoreLib.StratifiedInlining(program, BoogieUtil.BoogieOptions.ProverLogFilePath, BoogieUtil.BoogieOptions.ProverLogFileAppend, null);
             }
-            catch (ProverException)
+            catch (ProverException e)
             {
-                Log.WriteLine(Log.Error, "ProverException: {0}");
-                return new HashSet<string>();
+                Log.WriteLine(Log.Error, "ProverException: {0}", e.Message);
+                throw new InternalError("Unable to start prover: " + e.Message);
             }
 
             var mains = program.TopLevelDeclarations

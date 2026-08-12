@@ -39,6 +39,8 @@ datatype\unpack_ok.bpl c
 recbound\recbound.bpl c
 irreducible\irred_call.bpl b
 irreducible\irred_nocall.bpl b
+di\irred_false_safe.bpl b
+di\irred_false_safe.bpl b /di /set:DiCheckSanity
 dupmodifies\dup.bpl b
 dupmodifies\entrydup.bpl b
 dupmodifies\stubdup.bpl b
@@ -47,4 +49,11 @@ hydra\bug_avoid.bpl b
 hydra\both_safe.bpl c
 hydra\nested.bpl b
 hydra\rec.bpl c
+hydra\rec.bpl c /hydraWorkers:2 /recursionBound:5 EXPECT:localReuse=[1-9] EXPECT:stolen=[1-9] EXPECT:reconstructed=[1-9]
+hydra\di_merge_replay.bpl c /hydraWorkers:1 EXPECT:successfulMerges=[1-9]
+hydra\di_merge_replay.bpl c /hydraWorkers:2 EXPECT:merges=[1-9] EXPECT:reconstructed=[1-9] EXPECT:splits=[1-9]
+hydra\di_merge_replay.bpl c /hydraWorkers:4 EXPECT:merges=[1-9] EXPECT:reconstructed=[1-9] EXPECT:splits=[1-9]
+hydra\prefix_off_path.bpl b /hydraWorkers:1 /recursionBound:6 EXPECT:splits=[1-9] EXPECT:prefixEarlierGuards=[1-9]
+hydra\prefix_off_path.bpl b /hydraWorkers:2 /recursionBound:6 EXPECT:splits=[1-9] EXPECT:prefixEarlierGuards=[1-9]
+hydra\prefix_off_path.bpl b /hydraWorkers:4 /recursionBound:6 EXPECT:splits=[1-9] EXPECT:prefixEarlierGuards=[1-9]
 hydra\multi_ctx.bpl c

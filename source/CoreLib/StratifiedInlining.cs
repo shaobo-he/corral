@@ -48,6 +48,10 @@ namespace CoreLib
         public int stacksize = 0;
         public int calls = 0;
         public long time = 0;
+        public int diExpansionAttempts = 0;
+        public int diFreshStratifiedVCs = 0;
+        public int diSuccessfulMerges = 0;
+        public int diRejectedMergeCandidates = 0;
 
         public void print()
         {
@@ -57,7 +61,22 @@ namespace CoreLib
             Console.WriteLine("total number of assertions in Z3 stack: " + stacksize);
             Console.WriteLine("total number of Z3 calls: " + calls);
             Console.WriteLine("total time spent in Z3: (tick) " + time);
+            printDi();
             Console.WriteLine("-------------------------");
+        }
+
+        public void printDi()
+        {
+            Console.WriteLine("DI stats: expansionAttempts={0} freshStratifiedVCs={1} successfulMerges={2} rejectedMergeCandidates={3}",
+                diExpansionAttempts, diFreshStratifiedVCs, diSuccessfulMerges, diRejectedMergeCandidates);
+        }
+
+        public void printBench()
+        {
+            var expansions = diExpansionAttempts > 0 ? diExpansionAttempts : numInlined;
+            var smtMs = (long)(time * 1000.0 / Stopwatch.Frequency);
+            Console.WriteLine("BENCH stats: expansions={0} freshVCs={1} merges={2} rejectedMerges={3} solverCalls={4} smtMs={5}",
+                expansions, numInlined + 1, diSuccessfulMerges, diRejectedMergeCandidates, calls, smtMs);
         }
     }
 
@@ -102,6 +121,16 @@ namespace CoreLib
 
         // verification start time
         DateTime startTime;
+
+        // HYDRA workers must start from the program before the master VCGen
+        // passifies/instruments it. Cloning the master program later duplicates
+        // callsite instrumentation and can manufacture counterexamples.
+        Program hydraWorkerSeed;
+
+        public void SetHydraWorkerSeed(Program seed)
+        {
+            hydraWorkerSeed = seed;
+        }
 
         /* DAG inlining: tracks the inlining DAG and picks merge candidates.
            Constructed disabled unless /di was given, in which case Expand may
@@ -342,6 +371,16 @@ namespace CoreLib
             startTime = DateTime.UtcNow;
             await Task.CompletedTask;
 
+            // One deadline spans coordinator setup, all workers, and native
+            // confirmation of a worker witness, so confirmation receives only
+            // the remaining verification-wide budget.
+            using var hydraDeadlineCts = new CancellationTokenSource();
+            if (BoogieUtil.BoogieOptions.TimeLimit > 0)
+                hydraDeadlineCts.CancelAfter(
+                    TimeSpan.FromSeconds(BoogieUtil.BoogieOptions.TimeLimit));
+            using var hydraCancellationCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, hydraDeadlineCts.Token);
+
             procsHitRecBound = new HashSet<string>();
 
             // Find all procedures that are "forced inline"
@@ -349,14 +388,16 @@ namespace CoreLib
                 .Where(p => BoogieUtil.checkAttrExists(ForceInlineAttr, p.Attributes) || BoogieUtil.checkAttrExists(ForceInlineAttr, p.Proc.Attributes))
                 .Select(p => p.Name));
 
+            HydraPartition hydraErrorWitness = null;
+            HydraParallelStats hydraParallelStats = null;
+
             // Multicore HYDRA: /hydraWorkers:N (N>1) runs N parallel workers on
             // deep program clones. Workers never touch this master SI's program.
             //
             //   Correct / timeout / OOM / inconclusive → return parallel outcome.
-            //   Errors → fall through to sequential HYDRA on this master SI for a
-            //            refinement-compatible CEX (and to filter false UNSAFE).
-            //   Clone/resolve failure → sequential on master (some instrumented
-            //            programs cannot be re-resolved after FixedDuplicator).
+            //   Errors → replay the winning partition's fixed decisions and known
+            //            expansion prefix on this untouched master SI, resume only
+            //            within that leaf, and require a native callback CEX.
             if (cba.Util.BoogieVerify.options.useHydra &&
                 cba.Util.BoogieVerify.options.hydraWorkers > 1)
             {
@@ -364,49 +405,139 @@ namespace CoreLib
                 MacroSI.PRINT("HYDRA multicore: {0} workers", requestedWorkers);
                 try
                 {
-                    var cleanSnap = HydraParallel.CloneProgram(program);
+                    if (hydraWorkerSeed == null)
+                        throw new InternalError(
+                            "HYDRA: pristine pre-VCGen worker snapshot is unavailable");
                     var snapEntry =
-                        cleanSnap.TopLevelDeclarations.OfType<Implementation>()
-                            .FirstOrDefault(i => i.Name == impl.Name)
-                        ?? cleanSnap.TopLevelDeclarations.OfType<Implementation>()
-                            .FirstOrDefault(i =>
-                                QKeyValue.FindAttribute(i.Attributes, a => a.Key == "entrypoint") != null);
+                        hydraWorkerSeed.TopLevelDeclarations.OfType<Implementation>()
+                            .FirstOrDefault(i => i.Name == impl.Name);
                     if (snapEntry == null)
                         throw new InternalError(
-                            "HYDRA multicore: entry '" + impl.Name + "' missing after clone");
+                            "HYDRA multicore: entry '" + impl.Name + "' missing from worker seed");
 
                     var parOutcome = HydraParallel.Run(
-                        cleanSnap, snapEntry, callback,
+                        hydraWorkerSeed, snapEntry, callback,
                         requestedWorkers,
                         BoogieUtil.RecursionBound,
-                        cancellationToken,
-                        out var parStats);
+                        hydraCancellationCts.Token,
+                        out var parStats,
+                        out hydraErrorWitness);
                     if (StratifiedInliningVerbose > 0 ||
-                        cba.Util.BoogieVerify.options.extraFlags.Contains("HydraStats"))
+                        cba.Util.BoogieVerify.options.extraFlags.Contains("HydraStats") ||
+                        cba.Util.BoogieVerify.options.extraFlags.Contains("BenchStats"))
                     {
+                        var cumulativeSmtMs = (long)(parStats.CumulativeSmtTicks * 1000.0 / Stopwatch.Frequency);
+                        var coordinatorCloneMs = (long)(parStats.CoordinatorCloneTicks * 1000.0 / Stopwatch.Frequency);
+                        var initLockWaitMs = (long)(parStats.InitLockWaitTicks * 1000.0 / Stopwatch.Frequency);
+                        var workerCloneMs = (long)(parStats.WorkerCloneTicks * 1000.0 / Stopwatch.Frequency);
+                        var workerPrepareMs = (long)(parStats.WorkerPrepareTicks * 1000.0 / Stopwatch.Frequency);
+                        var workerSiConstructionMs = (long)(parStats.WorkerSiConstructionTicks * 1000.0 / Stopwatch.Frequency);
+                        var workerPreSearchMs = (long)(parStats.WorkerPreSearchTicks * 1000.0 / Stopwatch.Frequency);
+                        var closeLockWaitMs = (long)(parStats.CloseLockWaitTicks * 1000.0 / Stopwatch.Frequency);
+                        var workerCloseMs = (long)(parStats.WorkerCloseTicks * 1000.0 / Stopwatch.Frequency);
                         Console.WriteLine(
-                            "HYDRA multicore stats: wall={0}ms partitions={1}/{2} splits={3} stolen={4} reconstructed={5} peakWorkers={6} outcome={7}",
+                            "HYDRA multicore stats: wall={0}ms partitions={1}/{2} splits={3} stolen={4} " +
+                            "reconstructed={5} localReuse={6} ownerDequeues={7} peakWorkers={8} " +
+                            "expansions={9} freshVCs={10} merges={11} rejectedMerges={12} " +
+                            "solverCalls={13} smtMs={14} bound={15} unknown={16} outcome={17} " +
+                            "peakSolversApprox={18} prefixEarlierGuards={19} " +
+                            "publishedSiblings={20} publicationDeclined={21} " +
+                            "coordCloneMs={22} initLockWaitMs={23} workerCloneMs={24} " +
+                            "workerPrepareMs={25} workerSiCtorMs={26} workerPreSearchMs={27} " +
+                            "closeLockWaitMs={28} workerCloseMs={29}",
                             parStats.WallMs, parStats.PartitionsSolved, parStats.PartitionsCreated,
                             parStats.Splits, parStats.StolenPartitions, parStats.ReconstructedPartitions,
-                            parStats.PeakWorkers, parOutcome);
+                            parStats.LocalSiblingReuse, parStats.OwnerDequeues, parStats.PeakWorkers,
+                            parStats.ExpansionAttempts, parStats.FreshStratifiedVCs,
+                            parStats.SuccessfulDiMerges, parStats.RejectedDiMergeCandidates,
+                            parStats.SolverCalls, cumulativeSmtMs, parStats.RecursionBoundPartitions,
+                            parStats.UnknownPartitions, parOutcome, parStats.PeakWorkers + 1,
+                            parStats.PrefixEarlierGuards, parStats.PublishedSiblings,
+                            parStats.PublicationDeclined, coordinatorCloneMs, initLockWaitMs,
+                            workerCloneMs, workerPrepareMs, workerSiConstructionMs,
+                            workerPreSearchMs, closeLockWaitMs, workerCloseMs);
                     }
+
+                    if (hydraDeadlineCts.IsCancellationRequested)
+                        return Outcome.TimedOut;
+                    if (cancellationToken.IsCancellationRequested)
+                        return Outcome.Inconclusive;
+
+                    if (parOutcome == Outcome.Inconclusive &&
+                        parStats.RecursionBoundPartitions > 0 && parStats.UnknownPartitions == 0)
+                        ReachedRecursionBound = true;
 
                     if (parOutcome != Outcome.Errors)
                         return parOutcome;
 
-                    // Confirm + CEX on master (workers only mutated clones).
-                    MacroSI.PRINT("HYDRA multicore found bug; sequential CEX on master SI");
+                    hydraParallelStats = parStats;
+                    MacroSI.PRINT("HYDRA multicore found bug; confirming fixed leaf on master SI");
+                }
+                catch (OperationCanceledException) when (hydraDeadlineCts.IsCancellationRequested)
+                {
+                    return Outcome.TimedOut;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return Outcome.Inconclusive;
                 }
                 catch (Exception ex)
                 {
-                    // Some instrumented programs cannot be re-resolved after clone;
-                    // fall back to sequential rather than aborting verification.
-                    MacroSI.PRINT("HYDRA multicore unavailable ({0}); using sequential",
-                        ex.Message);
+                    throw new InternalError("HYDRA multicore failed: " + ex.Message);
                 }
-                // Sequential path below (CEX confirm or clone-failure fallback).
-                cba.Util.BoogieVerify.options.hydraWorkers = 1;
             }
+
+            Outcome outcome;
+            HashSet<StratifiedCallSite> openCallSites;
+
+            if (hydraErrorWitness != null)
+            {
+                if (hydraDeadlineCts.IsCancellationRequested)
+                    return Outcome.TimedOut;
+                if (cancellationToken.IsCancellationRequested)
+                    return Outcome.Inconclusive;
+
+                hydraParallelStats.WitnessConfirmations++;
+                int unexpandedWitnessCallSites;
+                try
+                {
+                    outcome = ConfirmHydraErrorWitness(
+                        impl, callback, hydraErrorWitness, hydraCancellationCts.Token,
+                        out openCallSites, out unexpandedWitnessCallSites);
+                }
+                catch (OperationCanceledException) when (hydraDeadlineCts.IsCancellationRequested)
+                {
+                    return Outcome.TimedOut;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return Outcome.Inconclusive;
+                }
+
+                if (outcome != Outcome.Errors || unexpandedWitnessCallSites != 0)
+                {
+                    if (hydraDeadlineCts.IsCancellationRequested || outcome == Outcome.TimedOut)
+                        return Outcome.TimedOut;
+                    if (cancellationToken.IsCancellationRequested)
+                        return Outcome.Inconclusive;
+                    hydraParallelStats.WitnessConfirmationFailures++;
+                    throw new InternalError(
+                        "HYDRA worker/master witness disagreement: master returned " + outcome +
+                        " and requested " + unexpandedWitnessCallSites + " additional expansions");
+                }
+                if (StratifiedInliningVerbose > 0 ||
+                    cba.Util.BoogieVerify.options.extraFlags.Contains("HydraStats") ||
+                    cba.Util.BoogieVerify.options.extraFlags.Contains("BenchStats"))
+                {
+                    Console.WriteLine(
+                        "HYDRA witness stats: produced={0} confirmations={1} failures={2} replaySteps={3} decisions={4}",
+                        hydraParallelStats.ErrorWitnesses, hydraParallelStats.WitnessConfirmations,
+                        hydraParallelStats.WitnessConfirmationFailures,
+                        hydraParallelStats.WitnessReplaySteps, hydraParallelStats.WitnessDecisions);
+                }
+            }
+            else
+            {
 
             // assert true to flush all one-time axioms, decls, etc
             prover.Assert(VCExpressionGenerator.True, true);
@@ -414,16 +545,18 @@ namespace CoreLib
             MacroSI.PRINT_DEBUG("Starting forward approach...");
 
             di = new DI(this, !cba.Util.BoogieVerify.options.useDI);
+            ResetHydraReplay();
 
             Push();
 
             StratifiedVC svc = new StratifiedVC(implName2StratifiedInliningInfo[impl.Name], implementations);
+            if (!di.disabled)
+                stats.diFreshStratifiedVCs++;
             mainVC = svc;
             di.RegisterMain(svc);
-            HashSet<StratifiedCallSite> openCallSites = new HashSet<StratifiedCallSite>(svc.CallSites);
+            openCallSites = new HashSet<StratifiedCallSite>(svc.CallSites);
             prover.Assert(svc.vcexpr, true);
 
-            Outcome outcome;
             var reporter = new StratifiedInliningErrorReporter(callback, this, svc);
 
 
@@ -522,7 +655,17 @@ namespace CoreLib
             if (useHydra)
             {
                 procsHitRecBound = new HashSet<string>();
-                outcome = HydraSequential(openCallSites, reporter, BoogieUtil.RecursionBound);
+                var hydraSearchBaseStackSize = stats.stacksize;
+                try
+                {
+                    outcome = HydraSequential(openCallSites, reporter, BoogieUtil.RecursionBound);
+                }
+                finally
+                {
+                    // Preserve the enclosing frame after an interrupted partition search.
+                    while (stats.stacksize > hydraSearchBaseStackSize)
+                        Pop();
+                }
             }
             else
             {
@@ -553,15 +696,25 @@ namespace CoreLib
                     // true Inconclusive, Errors, or Correct.
                     break;
                 }
+
             }
 
             Pop();
+            }
 
             if (cba.Util.BoogieVerify.options.extraFlags.Contains("DiCheckSanity"))
                 di.CheckSanity();
 
             if (!di.disabled)
+            {
                 Console.WriteLine("Time spent inside DI: {0} sec", di.timeTaken.TotalSeconds.ToString("F2"));
+                if (StratifiedInliningVerbose <= 1)
+                    stats.printDi();
+
+            }
+
+            if (cba.Util.BoogieVerify.options.extraFlags.Contains("BenchStats"))
+                stats.printBench();
 
             if (!di.disabled &&
                 (StratifiedInliningVerbose > 0 || cba.Util.BoogieVerify.options.extraFlags.Contains("DumpDag")))
@@ -598,11 +751,19 @@ namespace CoreLib
         {
             MacroSI.PRINT_DEBUG("    ~ extend callsite " + scs.callSite.calleeName);
             Debug.Assert(DoSubst || di.disabled);
+            if (!di.disabled)
+                stats.diExpansionAttempts++;
             var candidate = dontMerge ? null : di.FindMergeCandidate(scs);
             StratifiedVC ret = null;
 
             if (candidate == null)
             {
+                if (!di.disabled)
+                {
+                    stats.diFreshStratifiedVCs++;
+                    if (!dontMerge)
+                        stats.diRejectedMergeCandidates++;
+                }
                 stats.numInlined++;
                 var svc = new StratifiedVC(implName2StratifiedInliningInfo[scs.callSite.calleeName], implementations);
 
@@ -643,6 +804,7 @@ namespace CoreLib
 
                 attachedVC[scs] = svc;
                 attachedVCInv[svc] = scs;
+                RecordHydraFresh(scs);
                 ret = svc;
             }
             else
@@ -664,10 +826,12 @@ namespace CoreLib
             toassert = prover.VCExprGen.Implies(scs.callSiteExpr, prover.VCExprGen.And(cb, toassert));
 
             di.Merged(scs, vc);
+            stats.diSuccessfulMerges++;
             stats.vcSize += SizeComputingVisitor.ComputeSize(toassert);
 
             prover.Assert(toassert, true);
             attachedVC[scs] = vc;
+            RecordHydraMerge(scs, vc);
         }
 
         private VCExpr GetControlBoolean(StratifiedVC vc)
@@ -709,6 +873,7 @@ namespace CoreLib
             public HashSet<StratifiedCallSite> openCallSites;
             public DI di;
             public HashSet<string> previousSplitSites;
+            public List<HydraReplayStep> replaySteps;
 
             public static SiState SaveState(StratifiedInlining SI, HashSet<StratifiedCallSite> openCallSites)
             {
@@ -718,6 +883,7 @@ namespace CoreLib
                 ret.parent = new Dictionary<StratifiedCallSite, StratifiedCallSite>(SI.parent);
                 ret.controlBoolean = new Dictionary<StratifiedVC, VCExpr>(SI.controlBoolean);
                 ret.openCallSites = new HashSet<StratifiedCallSite>(openCallSites);
+                ret.replaySteps = SI.CaptureReplaySteps();
                 ret.di = SI.di.Copy();
                 return ret;
             }
@@ -734,6 +900,8 @@ namespace CoreLib
                 SI.attachedVC = attachedVC;
                 SI.attachedVCInv = attachedVCInv;
                 SI.parent = parent;
+                SI.hydraReplaySteps.Clear();
+                SI.hydraReplaySteps.AddRange(replaySteps);
                 SI.controlBoolean = controlBoolean;
                 SI.di = di;
                 openCallSites = this.openCallSites;
@@ -745,79 +913,280 @@ namespace CoreLib
                 previousSplitSites = this.previousSplitSites;
             }
         }
-
         // Stats for HYDRA (reset per VerifyImplementation)
         public int HydraSplits { get; private set; }
         public int HydraPartitionsSolved { get; private set; }
+        public int HydraPrefixEarlierGuards { get; private set; }
 
-        // Assert that the dynamic context of svc must be reached.
-        //
-        // Each StratifiedCallSite has its own callSiteExpr; asserting that
-        // expression (and those of its ancestors) identifies the particular
-        // dynamic callsite/context, not merely "procedure P executes somewhere".
-        //
-        // Under SIBoolControlVC we also force the block control boolean of each
-        // ancestor callsite's containing block, mirroring historical MustReach
-        // path forcing without Boogie 3's absyIds-dependent MustReach API.
-        public List<Tuple<StratifiedVC, Block>> AssertMustReach(StratifiedVC svc, HashSet<Tuple<StratifiedVC, Block>> prevAsserted)
+        // Build prefix reachability in the BoolControlVC encoding. Boogie's
+        // StratifiedVC.MustReach API is tied to the ControlFlow-function encoding;
+        // Corral intentionally runs with SIBoolControlVC, where that function and
+        // its ControlFlowIdMap are not part of the VC. BoolControl trace recovery
+        // selects the first true successor of each block. Mirror that selection
+        // here: an edge to b is selected exactly when b holds and every earlier
+        // sibling is false. This makes MUST_REACH name the reconstructed execution,
+        // rather than any feasible off-path suffix. VCExpr let bindings bind
+        // variables in every RHS and Boogie sorts their acyclic dependencies, so
+        // predecessor references below are not free.
+        VCExpr HydraPrefixReach(StratifiedVC vc, Block target)
         {
-            var ret = new List<Tuple<StratifiedVC, Block>>();
+            if (vc.blockToControlVar == null)
+                throw new InternalError("HYDRA requires SIBoolControlVC prefix reachability");
 
-            if (!attachedVCInv.ContainsKey(svc))
-                return ret;
+            var impl = vc.info.Implementation;
+            var gen = prover.VCExprGen;
+            var reachVar = new Dictionary<Block, VCExprVar>();
+            foreach (var block in impl.Blocks)
+            {
+                reachVar[block] = gen.Variable(
+                    "hydraReach_" + vc.id + "_" + reachVar.Count,
+                    Microsoft.Boogie.Type.Bool);
+            }
 
-            // Force the callsite that produced svc, then walk to main.
-            var iter = attachedVCInv[svc];
-            prover.Assert(iter.callSiteExpr, true);
+            var bindings = new List<VCExprLetBinding>();
+            var reverseDag = Program.GraphFromImpl(impl, false);
+            foreach (var block in reverseDag.TopologicalSort())
+            {
+                VCExpr rhs;
+                if (block == impl.Blocks[0])
+                {
+                    rhs = VCExpressionGenerator.True;
+                }
+                else
+                {
+                    rhs = VCExpressionGenerator.False;
+                    foreach (var predecessor in reverseDag.Successors(block))
+                    {
+                        if (predecessor.TransferCmd is not GotoCmd gotoCmd)
+                            throw new InternalError(
+                                "HYDRA predecessor has no goto to its successor");
+
+                        VCExpr selectedEdge = vc.blockToControlVar[block];
+                        var foundTarget = false;
+                        foreach (var sibling in gotoCmd.LabelTargets)
+                        {
+                            if (sibling == block)
+                            {
+                                foundTarget = true;
+                                break;
+                            }
+                            selectedEdge = gen.AndSimp(selectedEdge,
+                                gen.Not(vc.blockToControlVar[sibling]));
+                            HydraPrefixEarlierGuards++;
+                        }
+                        if (!foundTarget)
+                            throw new InternalError(
+                                "HYDRA reverse CFG edge is absent from the goto target list");
+
+                        rhs = gen.OrSimp(rhs,
+                            gen.AndSimp(reachVar[predecessor], selectedEdge));
+                    }
+                }
+                bindings.Add(gen.LetBinding(reachVar[block], rhs));
+            }
+
+            if (!reachVar.ContainsKey(target))
+                throw new InternalError("HYDRA reach target is outside its dynamic VC");
+            return gen.Let(bindings, reachVar[target]);
+        }
+
+        // The exact dynamic predicate is the conjunction of prefix reachability
+        // for the selected callsite and every callsite that created its context.
+        // Reaching a containing block entails Boogie's inserted callsite assume;
+        // the DI attachment in turn activates the child control boolean and the
+        // child's entry block, so ancestor prefix reach activates nested VCs.
+        VCExpr HydraDynamicMustReach(
+            StratifiedCallSite scs,
+            List<Tuple<StratifiedVC, Block>> asserted)
+        {
+            var gen = prover.VCExprGen;
+            VCExpr result = VCExpressionGenerator.True;
+            var iter = scs;
 
             while (true)
             {
-                StratifiedVC vc;
+                StratifiedVC containingVc;
+                result = gen.AndSimp(result, iter.callSiteExpr);
                 if (parent.ContainsKey(iter))
-                    vc = attachedVC[parent[iter]];
-                else
-                    vc = mainVC;
-
-                var callblock = vc.callSites.First(tup => tup.Value.Contains(iter)).Key;
-                var key = Tuple.Create(vc, callblock);
-                if (prevAsserted == null || !prevAsserted.Contains(key))
                 {
-                    if (vc.blockToControlVar != null && vc.blockToControlVar.ContainsKey(callblock))
-                        prover.Assert(vc.blockToControlVar[callblock], true);
-                    ret.Add(key);
+                    var parentCall = parent[iter];
+                    if (!attachedVC.TryGetValue(parentCall, out containingVc))
+                        throw new InternalError("HYDRA dynamic context is not attached");
                 }
+                else
+                {
+                    containingVc = mainVC;
+                }
+
+                var matches = containingVc.callSites
+                    .Where(entry => entry.Value.Contains(iter))
+                    .Select(entry => entry.Key)
+                    .ToList();
+                if (matches.Count != 1)
+                    throw new InternalError("HYDRA callsite does not have one containing block");
+
+                var callBlock = matches[0];
+                result = gen.AndSimp(result, HydraPrefixReach(containingVc, callBlock));
+                asserted?.Add(Tuple.Create(containingVc, callBlock));
 
                 if (!parent.ContainsKey(iter))
                     break;
-
                 iter = parent[iter];
-                prover.Assert(iter.callSiteExpr, true);
             }
 
-            return ret;
+            return result;
         }
 
-        // MUST_AVOID(c): the dynamic callsite expression is false.
+        // MUST_REACH and MUST_AVOID assert opposite polarities of this same
+        // predicate. Their union is the current partition and their intersection
+        // is empty by construction.
+        public List<Tuple<StratifiedVC, Block>> AssertMustReach(
+            StratifiedVC svc,
+            HashSet<Tuple<StratifiedVC, Block>> prevAsserted)
+        {
+            var asserted = new List<Tuple<StratifiedVC, Block>>();
+            if (!attachedVCInv.TryGetValue(svc, out var scs))
+                return asserted;
+            prover.Assert(HydraDynamicMustReach(scs, asserted), true);
+            return asserted;
+        }
+
         public void AssertMustAvoid(StratifiedCallSite scs)
         {
-            prover.Assert(scs.callSiteExpr, false);
+            prover.Assert(HydraDynamicMustReach(scs, null), false);
         }
 
-        // Apply a HYDRA decision to the DI DAG (prune unreachable merge structure).
+        // HYDRA decisions constrain one dynamic incoming call edge. A DI VC can
+        // have several incoming merge edges, so deleting the whole VC (or every
+        // disjoint VC) is not implied by either decision and can drop a still-live
+        // context. Keep the DI DAG intact; the prover predicate is authoritative.
+        // Extra nodes affect only split/merge heuristics, not partition semantics.
         void ApplyHydraDecisionToDI(HydraDecisionType d, StratifiedVC n)
         {
-            if (di.disabled) return;
-            if (d == HydraDecisionType.MUST_AVOID)
+        }
+
+        // Historical HYDRA first runs an under-approximation with every open
+        // call blocked and extracts its assumption core. Core leaves vote for
+        // their expanded ancestors; this keeps candidate policy separate from
+        // the correctness-critical partition predicates.
+        HashSet<StratifiedCallSite> HydraUnderapproxUnsatCore(
+            HashSet<StratifiedCallSite> openCallSites,
+            CancellationToken cancellationToken)
+        {
+            var result = new HashSet<StratifiedCallSite>();
+            if (openCallSites.Count == 0 || cancellationToken.IsCancellationRequested)
+                return result;
+
+            var ordered = openCallSites
+                .OrderBy(GetPersistentID, StringComparer.Ordinal)
+                .ToList();
+            var assumptions = ordered
+                .Select(site => prover.VCExprGen.Not(site.callSiteExpr))
+                .ToList();
+
+            stats.calls++;
+            var stopwatch = Stopwatch.StartNew();
+            try
             {
-                di.DeleteNode(n);
+                var (solverOutcome, core) = prover.CheckAssumptions(
+                    assumptions, new EmptyErrorReporter(), cancellationToken)
+                    .GetAwaiter().GetResult();
+                var outcome =
+                    ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
+                if (outcome != Outcome.Correct || core == null)
+                    return result;
+
+                foreach (var index in core)
+                {
+                    if (index >= 0 && index < ordered.Count)
+                        result.Add(ordered[index]);
+                }
+                return result;
             }
-            else if (d == HydraDecisionType.MUST_REACH)
+            finally
             {
-                var disj = di.DisjointNodes(n);
-                disj.Iter(m => di.DeleteNode(m));
+                stats.time += stopwatch.ElapsedTicks;
             }
         }
 
+        StratifiedVC SelectHydraSplitCandidate(
+            HashSet<StratifiedCallSite> openCallSites,
+            HashSet<string> previousSplitSites,
+            CancellationToken cancellationToken,
+            out int score)
+        {
+            score = -1;
+            var candidates = attachedVCInv.Keys
+                .Where(vc => di.disabled || di.VcExists(vc))
+                .Where(vc => attachedVCInv.ContainsKey(vc))
+                .Where(vc => !previousSplitSites.Contains(GetPersistentID(attachedVCInv[vc])))
+                .OrderBy(vc => GetPersistentID(attachedVCInv[vc]), StringComparer.Ordinal)
+                .ToList();
+            if (candidates.Count == 0)
+                return null;
+
+            var coreSites = HydraUnderapproxUnsatCore(openCallSites, cancellationToken);
+            if (coreSites.Count > 0)
+            {
+                var descendantCoreCount = new Dictionary<StratifiedCallSite, int>();
+                foreach (var leaf in coreSites)
+                {
+                    var iter = leaf;
+                    while (true)
+                    {
+                        descendantCoreCount.TryGetValue(iter, out var count);
+                        descendantCoreCount[iter] = count + 1;
+                        if (!parent.TryGetValue(iter, out iter))
+                            break;
+                    }
+                }
+
+                StratifiedVC coreBest = null;
+                var coreScore = -1;
+                foreach (var candidate in candidates)
+                {
+                    var site = attachedVCInv[candidate];
+                    descendantCoreCount.TryGetValue(site, out var candidateScore);
+                    if (candidateScore > coreScore)
+                    {
+                        coreScore = candidateScore;
+                        coreBest = candidate;
+                    }
+                }
+                if (coreBest != null && coreScore > 0)
+                {
+                    score = coreScore;
+                    return coreBest;
+                }
+            }
+
+            // If core extraction is unavailable or names no expanded ancestor,
+            // retain the historical structural fallback. It affects only work
+            // distribution, never the partition formula.
+            StratifiedVC structuralBest = null;
+            var structuralScore = -1;
+            Dictionary<StratifiedVC, HashSet<StratifiedVC>> subtreeSizes = null;
+            Dictionary<StratifiedVC, int> disjointCounts = null;
+            if (!di.disabled)
+            {
+                subtreeSizes = di.ComputeSubtrees();
+                disjointCounts = di.ComputeNumDisjoint();
+            }
+
+            foreach (var candidate in candidates)
+            {
+                var candidateScore = di.disabled
+                    ? 0
+                    : Math.Min(subtreeSizes[candidate].Count, disjointCounts[candidate]);
+                if (candidateScore > structuralScore)
+                {
+                    structuralScore = candidateScore;
+                    structuralBest = candidate;
+                }
+            }
+            score = structuralScore;
+            return structuralBest;
+        }
         // Sequential HYDRA partition search (historical MustReachSplitStyle semantics).
         // Splits when the DI DAG grows enough; explores MUST_AVOID then MUST_REACH
         // depth-first via Push/Pop, restoring SI/DI bookkeeping from SiState.
@@ -853,7 +1222,10 @@ namespace CoreLib
                 if (BoogieUtil.BoogieOptions.TimeLimit != 0)
                 {
                     if ((DateTime.UtcNow - startTime).TotalSeconds > BoogieUtil.BoogieOptions.TimeLimit)
-                        return Outcome.TimedOut;
+                    {
+                        outcome = Outcome.TimedOut;
+                        break;
+                    }
                 }
 
                 // Split when the DI tree has grown enough since the last split.
@@ -862,47 +1234,8 @@ namespace CoreLib
                 if ((treesize == 0 && size > 2) || (treesize != 0 && size > treesize + 2))
                 {
                     var st = DateTime.Now;
-                    StratifiedVC maxVc = null;
-                    int maxVcScore = -1;
-                    var toRemove = new HashSet<StratifiedVC>();
-                    Dictionary<StratifiedVC, HashSet<StratifiedVC>> sizes = null;
-                    Dictionary<StratifiedVC, int> disj = null;
-
-                    if (!di.disabled)
-                    {
-                        sizes = di.ComputeSubtrees();
-                        disj = di.ComputeNumDisjoint();
-                        foreach (var vc in attachedVCInv.Keys.ToList())
-                        {
-                            if (!di.VcExists(vc))
-                            {
-                                toRemove.Add(vc);
-                                continue;
-                            }
-                            if (!attachedVCInv.ContainsKey(vc)) continue;
-                            var cs = attachedVCInv[vc];
-                            if (previousSplitSites.Contains(GetPersistentID(cs))) continue;
-
-                            var score = Math.Min(sizes[vc].Count, disj[vc]);
-                            if (score >= maxVcScore)
-                            {
-                                maxVc = vc;
-                                maxVcScore = score;
-                            }
-                        }
-                        toRemove.Iter(vc => attachedVCInv.Remove(vc));
-                    }
-                    else
-                    {
-                        // Without DI: pick an attached non-main callsite not yet split.
-                        foreach (var kv in attachedVC)
-                        {
-                            if (previousSplitSites.Contains(GetPersistentID(kv.Key))) continue;
-                            if (kv.Value == mainVC) continue;
-                            maxVc = kv.Value;
-                            break;
-                        }
-                    }
+                    var maxVc = SelectHydraSplitCandidate(
+                        openCallSites, previousSplitSites, CancellationToken.None, out var maxVcScore);
 
                     if (maxVc != null && attachedVCInv.ContainsKey(maxVc))
                     {
@@ -958,8 +1291,7 @@ namespace CoreLib
                     foreach (var scs in reporter.callSitesToExpand)
                     {
                         openCallSites.Remove(scs);
-                        // dontMerge=true: keep expansion deterministic under partition replay
-                        var svc = Expand(scs, null, true, true);
+                        var svc = Expand(scs, null, true, false);
                         if (svc != null) openCallSites.UnionWith(svc.CallSites);
                     }
                     continue;
@@ -1042,8 +1374,9 @@ namespace CoreLib
             reporter.reportTraceIfNothingToExpand = false;
             if (BoogieVerify.options.extraFlags.Contains("HydraStats") || StratifiedInliningVerbose > 0)
             {
-                Console.WriteLine("HYDRA sequential: splits={0} partitions={1} decisionTime={2}s",
-                    HydraSplits, HydraPartitionsSolved, splitDecisionMs.TotalSeconds.ToString("F2"));
+                Console.WriteLine("HYDRA sequential: splits={0} partitions={1} decisionTime={2}s prefixEarlierGuards={3}",
+                    HydraSplits, HydraPartitionsSolved, splitDecisionMs.TotalSeconds.ToString("F2"),
+                    HydraPrefixEarlierGuards);
             }
             return outcome;
         }
@@ -1102,11 +1435,23 @@ namespace CoreLib
 
         private Outcome CheckVC(ProverInterface.ErrorHandler reporter)
         {
+            return CheckVC(reporter, CancellationToken.None);
+        }
+
+        private Outcome CheckVC(ProverInterface.ErrorHandler reporter, CancellationToken cancellationToken)
+        {
             stats.calls++;
             var stopwatch = Stopwatch.StartNew();
-            var (solverOutcome, _) = prover.CheckAssumptions(new List<VCExpr>(), reporter, CancellationToken.None).GetAwaiter().GetResult();
-            stats.time += stopwatch.ElapsedTicks;
-            return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
+            try
+            {
+                var (solverOutcome, _) = prover.CheckAssumptions(
+                    new List<VCExpr>(), reporter, cancellationToken).GetAwaiter().GetResult();
+                return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
+            }
+            finally
+            {
+                stats.time += stopwatch.ElapsedTicks;
+            }
         }
 
         public override Outcome FindLeastToVerify(Implementation impl, ref HashSet<string> allBoolVars)
@@ -1746,6 +2091,20 @@ namespace CoreLib
 
     }
 
+    static class DiRecursionContext
+    {
+        // Include both the vector slot and an unambiguous delimiter. Concatenating
+        // raw counters maps distinct contexts such as [1, 11] and [11, 1] to the
+        // same string, which can make DI merge different recursion instances.
+        public static string Encode(IEnumerable<int> relevantIndexes, int[] recursionVector)
+        {
+            var ret = new StringBuilder();
+            foreach (var index in relevantIndexes.Distinct().OrderBy(index => index))
+                ret.Append(index).Append('=').Append(recursionVector[index]).Append(';');
+            return ret.ToString();
+        }
+    }
+
     class IndexComputer
     {
         Program program;
@@ -1842,13 +2201,8 @@ namespace CoreLib
             var procs = new HashSet<string>(recursiveProcs);
             procs.IntersectWith(procToReachableProcs[proc]);
 
-            var ret = "";
-            for (int i = 0; i < recursionVector.Length; i++)
-            {
-                if (!procs.Contains(indexToProc[i])) continue;
-                ret += recursionVector[i].ToString();
-            }
-            return proc + "[" + ret + "]";
+            var relevantIndexes = procs.Select(reachableProc => procToIndex[reachableProc]);
+            return proc + "[" + DiRecursionContext.Encode(relevantIndexes, recursionVector) + "]";
         }
     }
 
@@ -1856,8 +2210,13 @@ namespace CoreLib
     {
         Dictionary<string, Implementation> impls;
 
-        // cache: impl -> pairs of disjoint calls
+        // cache: impl -> pairs of calls that can occur on the same execution
         Dictionary<string, HashSet<Tuple<int, int>>> exclusiveCache;
+
+        // Duplicate callsite IDs make the reachability relation ambiguous. Keep
+        // this separate from an empty reachable-pair set: the latter would make
+        // every later query appear exclusive and permit unsound DI merges.
+        HashSet<string> unavailable;
 
         public ProgramDisjointness(Program program)
         {
@@ -1866,12 +2225,14 @@ namespace CoreLib
                 .Iter(impl => map.Add(impl.Name, impl));
 
             exclusiveCache = new Dictionary<string, HashSet<Tuple<int, int>>>();
+            unavailable = new HashSet<string>();
             this.impls = new Dictionary<string, Implementation>(map);
         }
 
         public ProgramDisjointness(Dictionary<string, Implementation> impls)
         {
             exclusiveCache = new Dictionary<string, HashSet<Tuple<int, int>>>();
+            unavailable = new HashSet<string>();
             this.impls = new Dictionary<string, Implementation>(impls);
         }
 
@@ -1888,6 +2249,9 @@ namespace CoreLib
         public bool IsExclusive(Implementation impl, int n1, int n2)
         {
             if (n1 < 0 || n2 < 0)
+                return false;
+
+            if (unavailable.Contains(impl.Name))
                 return false;
 
             if (exclusiveCache.ContainsKey(impl.Name))
@@ -1921,7 +2285,8 @@ namespace CoreLib
                     if (seen.Contains(v))
                     {
                         Console.WriteLine("WARNING: Duplicate si_unique_call annotations in {0}", impl.Name);
-                        exclusiveCache.Add(impl.Name, new HashSet<Tuple<int, int>>());
+                        unavailable.Add(impl.Name);
+                        exclusiveCache.Remove(impl.Name);
                         return false;
                     }
                     seen.Add(v);
@@ -1988,7 +2353,7 @@ namespace CoreLib
                 this.id = id;
                 this.ImplName = ImplName;
                 this.Size = Size;
-                this.uid = uidCounter++;
+                this.uid = Interlocked.Increment(ref uidCounter) - 1;
             }
 
             public override string ToString()
@@ -2262,14 +2627,13 @@ namespace CoreLib
             var procToReachableRecProcs = new Dictionary<string, HashSet<string>>();
             var ImplToId = new Func<Implementation, int[], string>((impl, rv) =>
             {
-                var str = "";
                 if (!procToReachableRecProcs.ContainsKey(impl.Name))
                 {
                     procToReachableRecProcs.Add(impl.Name,
                         recursiveProcs.Intersection(BoogieUtil.GetReachableNodes<string>(impl.Name, cg)));
                 }
-                foreach (var r in procToReachableRecProcs[impl.Name])
-                    str += rv[impl2index[r]].ToString();
+                var relevantIndexes = procToReachableRecProcs[impl.Name].Select(r => impl2index[r]);
+                var str = DiRecursionContext.Encode(relevantIndexes, rv);
                 var id = string.Format("{0}[{1}]", impl.Name, str);
                 
                 return id;
@@ -2931,14 +3295,13 @@ namespace CoreLib
             var ImplToNode = new Func<Implementation, int[], DagNode>((impl, rv) =>
             {
                 var size = 1;
-                var str = "";
                 if (!procToReachableRecProcs.ContainsKey(impl.Name))
                 {
                     procToReachableRecProcs.Add(impl.Name,
                         recursiveProcs.Intersection(BoogieUtil.GetReachableNodes<string>(impl.Name, cg)));
                 }
-                foreach (var r in procToReachableRecProcs[impl.Name])
-                    str += rv[impl2index[r]].ToString();
+                var relevantIndexes = procToReachableRecProcs[impl.Name].Select(r => impl2index[r]);
+                var str = DiRecursionContext.Encode(relevantIndexes, rv);
                 return new DagNode(string.Format("{0}[{1}]", impl.Name, str), impl.Name, size);
             });
 
