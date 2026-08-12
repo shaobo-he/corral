@@ -125,19 +125,6 @@ state. A worker counterexample is confirmed by replaying its fixed partition
 decisions and known expansion prefix on the master prover; any remaining inlining
 stays inside that leaf and produces the normal Corral trace.
 
-Run the 1/2/4/8-worker benchmark with:
-
-```console
-$ scripts/bench-di-hydra.sh
-```
-
-By default it uses the ntdriver-derived SMACK BPL corpus under
-`$SMACK_TEST_ROOT` (default `/home/shaobo/smack-project/smack/test`) and requires
-all ten named inputs so a partial corpus cannot be mistaken for a complete run.
-Pass explicit BPL paths to benchmark a smaller or in-repository corpus. Raw logs,
-commands, metadata, verdicts, replay/scheduling counts, and reconstruction phase
-timings are retained in `$BENCH_RESULTS_DIR`.
-
 **`/useArrayTheory` means something different here than on `mini-corral`.**
 Boogie 3.5.6 no longer takes a `/useArrayTheory` switch — array theory is always
 on — so the port stopped forwarding one. What is left is the extensionality
