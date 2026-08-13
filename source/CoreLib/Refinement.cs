@@ -815,7 +815,7 @@ namespace cba
             // Copy, don't alias -- see the comment in RestrictToTrace.addTraceRec.
             var newMainProc = new Procedure(Token.NoToken, "fakeMain", oldMainProc.TypeParameters,
                 oldMainProc.InParams, oldMainProc.OutParams, oldMainProc.IsPure, oldMainProc.Requires,
-                oldMainProc.Preserves, oldMainProc.Ensures,
+                oldMainProc.Preserves, oldMainProc.Ensures, oldMainProc.MeasureCmds,
                 new List<IdentifierExpr>(oldMainProc.Modifies));
 
             var newMainImpl = new Implementation(Token.NoToken, "fakeMain", oldMainImpl.TypeParameters,

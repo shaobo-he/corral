@@ -414,7 +414,7 @@ namespace cba
                         Token.NoToken, LanguageSemantics.assertNotReachableName(),
                         new List<TypeVariable>(), new List<Variable>(), new List<Variable>(),
                         false, new List<Requires>(), new List<Requires>(), new List<Ensures>(),
-                        new List<IdentifierExpr>()));
+                        new List<MeasureCmd>(), new List<IdentifierExpr>()));
 
             }
             else
