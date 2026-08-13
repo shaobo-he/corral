@@ -439,6 +439,27 @@ namespace cba
                     o => o.Replace(" ", "").Equals(arrayExtensionalityOff, StringComparison.OrdinalIgnoreCase));
             }
 
+            // Drop "pure" from any procedure that has a body. A pure procedure is resolved
+            // StateLess (Implementation.cs:578), so it may not mention a global at all, and
+            // corral's error flag is a global: instrumenting one produces "cannot refer to a
+            // global variable in this context: assertsPassed" and the run dies as an internal
+            // error. base.bpl has four such procedures (Map_MakeEmpty, Loc_New, Tag_New,
+            // Tags_New), so calling any of them was fatal.
+            //
+            // Skipping instrumentation instead would be wrong: a pure procedure body may
+            // contain a real assert, and Boogie does check it (verified against stock Boogie),
+            // so leaving it untracked would lose a bug. Purity is a well-formedness property of
+            // the input, and the input has just been resolved and typechecked with it enforced;
+            // it constrains nothing that corral does downstream, since corral inlines bodies
+            // rather than reasoning about Civl movers. Bodiless pure procedures keep the marker
+            // -- nothing instruments them, and a non-pure caller may still call them
+            // (CallCmd.cs:239 only restricts calls made *from* a pure procedure).
+            foreach (var impl in init.TopLevelDeclarations.OfType<Implementation>())
+            {
+                if (impl.Proc != null)
+                    impl.Proc.IsPure = false;
+            }
+
             // Get rid of polymorphism. Boogie's own ExecutionEngine does this right after
             // typechecking; corral never did, so a polymorphic declaration (e.g. any of the
             // datatypes in Boogie's base.bpl) reached the prover, where DeclareType threw
