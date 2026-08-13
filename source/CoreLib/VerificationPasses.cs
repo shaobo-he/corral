@@ -189,7 +189,7 @@ namespace cba
                 inv.Add(new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "x", Microsoft.Boogie.Type.Int), true));
 
                 intDecl = new Procedure(Token.NoToken, recordIntArgProc, new List<TypeVariable>(), inv, new List<Variable>(), false,
-                    new List<Requires>(), new List<Requires>(), new List<Ensures>(), new List<IdentifierExpr>());
+                    new List<Requires>(), new List<Requires>(), new List<Ensures>(), new List<MeasureCmd>(), new List<IdentifierExpr>());
 
                 program.AddTopLevelDeclaration(intDecl);
             }
@@ -201,7 +201,7 @@ namespace cba
                 inv.Add(new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "x", Microsoft.Boogie.Type.Bool), true));
 
                 boolDecl = new Procedure(Token.NoToken, recordBoolArgProc, new List<TypeVariable>(), inv, new List<Variable>(), false,
-                    new List<Requires>(), new List<Requires>(), new List<Ensures>(), new List<IdentifierExpr>());
+                    new List<Requires>(), new List<Requires>(), new List<Ensures>(), new List<MeasureCmd>(), new List<IdentifierExpr>());
 
                 program.AddTopLevelDeclaration(boolDecl);
             }
