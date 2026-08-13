@@ -279,7 +279,19 @@ namespace cba
                             PrintConcurrentProgramPath.print(inputProg, cexTrace, traceName);
 
                         var init = BoogieUtil.ReadAndOnlyResolve(config.inputFile);
-                        PrintConcurrentProgramPath.print(init, cexTrace, config.inputFile);
+                        try
+                        {
+                            // Re-prints the same trace against the *source* program. Monomorphization
+                            // renames the implementation of a type-parameterized procedure (foo ->
+                            // foo_3), so a trace that enters such a body names a procedure that does
+                            // not exist in the source program and this print throws. The verdict and
+                            // the trace above are already correct; do not abort the process for it.
+                            PrintConcurrentProgramPath.print(init, cexTrace, config.inputFile);
+                        }
+                        catch (KeyNotFoundException)
+                        {
+                            Console.WriteLine("Warning: cannot map the trace back to {0} (monomorphized procedure on the path)", config.inputFile);
+                        }
                     }
 
                     apass.reset();
@@ -393,10 +405,6 @@ namespace cba
             foreach (var decl in init.TopLevelDeclarations)
                 decl.Attributes = BoogieUtil.removeAttr("inline", decl.Attributes);
 
-            // Add unique ids on calls
-            var addIds = new AddUniqueCallIds();
-            addIds.VisitProgram(init);
-
             // Update mod sets
             BoogieUtil.DoModSetAnalysis(init);
 
@@ -406,6 +414,73 @@ namespace cba
                 BoogieUtil.PrintProgram(init, "error.bpl");
                 throw new InvalidProg("Cannot typecheck " + config.inputFile);
             }
+
+            // Get rid of polymorphism. Boogie's own ExecutionEngine does this right after
+            // typechecking; corral never did, so a polymorphic declaration (e.g. any of the
+            // datatypes in Boogie's base.bpl) reached the prover, where DeclareType threw
+            // ProverException("Polymorphic datatypes are not supported"). That exception was
+            // swallowed in BoogieVerify.Verify, which then reported "Program has no bugs".
+            if (MonomorphismChecker.IsMonomorphic(init))
+            {
+                BoogieUtil.BoogieOptions.TypeEncodingMethod = CoreOptions.TypeEncoding.Monomorphic;
+            }
+            else if (BoogieUtil.BoogieOptions.TypeEncodingMethod == CoreOptions.TypeEncoding.Monomorphic)
+            {
+                // Boogie's monomorphizer instantiates the *body* of a type-parameterized
+                // procedure at a call site's actual type arguments only when that procedure's
+                // implementation (or its procedure) carries {:inline}:
+                // MonomorphizationVisitor.InlineCallCmd calls InstantiateImplementation only
+                // under IsInlined (Monomorphization.cs:1584-1608). Otherwise the call site is
+                // rewritten to an instantiated *procedure* with no implementation, and corral --
+                // which verifies by inlining bodies, not by modular reasoning against contracts --
+                // havocs the return value and reports a false "This assertion can fail".
+                // corral inlines every implementation anyway, so mark them all inlined here.
+                // The attribute is removed again below, so it cannot reach any later pass.
+                //
+                // Recursive ones are left alone: InstantiateImplementation records the
+                // instantiation in implInstantiations only at Monomorphization.cs:1738, after it
+                // has already walked the body at :1721-1722, so a recursive call in that body
+                // re-enters with an empty memo and never terminates. Stock Boogie 3.5.6
+                // stack-overflows on a recursive {:inline} polymorphic procedure for the same
+                // reason; until that is fixed upstream, keep the old bodiless behaviour there
+                // rather than crash.
+                var recursive = PolymorphicImplsOnACycle(init);
+                foreach (var impl in init.TopLevelDeclarations.OfType<Implementation>()
+                                         .Where(impl => impl.TypeParameters.Count > 0 && !recursive.Contains(impl)))
+                    impl.AddAttribute("inline", Expr.Literal(1));
+
+                var status = Monomorphizer.Monomorphize(BoogieUtil.BoogieOptions, init);
+                if (status == MonomorphizableStatus.UnhandledPolymorphism)
+                    throw new InvalidProg("Cannot monomorphize " + config.inputFile + ": unhandled polymorphism");
+                if (status == MonomorphizableStatus.ExpandingTypeCycle)
+                    throw new InvalidProg("Cannot monomorphize " + config.inputFile + ": expanding type cycle");
+
+                foreach (var decl in init.TopLevelDeclarations)
+                    decl.Attributes = BoogieUtil.removeAttr("inline", decl.Attributes);
+
+                // Monomorphization rewrites in place; re-resolve so that no Decl from the
+                // polymorphic program survives into the passes below
+                init = BoogieUtil.ReResolveInMem(init);
+            }
+
+            // Get rid of lambdas: each one is replaced by a call to a freshly generated
+            // map-valued function, plus an axiom defining that function. Boogie's own
+            // ExecutionEngine does this too; corral never did, and Boogie2VCExprTranslator has no
+            // case for LambdaExpr, so a lambda that survived to VC generation aborted the process
+            // (a null deref in TranslateBinaryOperator, or Cce.UnreachableException in
+            // VisitVariableSeq). This has to run after monomorphization: the lifted function does
+            // not pick up type variables that occur only in the types of the captured variables,
+            // so lifting a polymorphic lambda yields a function with an undeclared type parameter.
+            if (BoogieUtil.BoogieOptions.ExpandLambdas)
+            {
+                LambdaHelper.ExpandLambdas(BoogieUtil.BoogieOptions, init);
+            }
+
+            // Add unique ids on calls. This has to run after monomorphization, which clones
+            // implementations: clones would otherwise carry duplicates of the ids that
+            // StratifiedInlining uses to identify call sites.
+            var addIds = new AddUniqueCallIds();
+            addIds.VisitProgram(init);
 
             // Gather the set of initially tracked variables
             initialTrackedVars = getTrackedVars(init, config);
@@ -422,6 +497,44 @@ namespace cba
             ProgTransformation.PersistentProgram.FreeParserMemory();
 
             return inputProg;
+        }
+
+        // The type-parameterized implementations that can reach themselves through calls to other
+        // type-parameterized procedures. Only these can drive Boogie's InstantiateImplementation
+        // into unbounded recursion, and only these need to be kept out of the {:inline} marking
+        // above. The graph has one node per type-parameterized implementation, so it is tiny.
+        private static HashSet<Implementation> PolymorphicImplsOnACycle(Program program)
+        {
+            var polyImpls = program.TopLevelDeclarations.OfType<Implementation>()
+                                   .Where(impl => impl.TypeParameters.Count > 0).ToList();
+            var implOfProc = new Dictionary<Procedure, Implementation>();
+            foreach (var impl in polyImpls)
+                implOfProc[impl.Proc] = impl;
+
+            var reaches = new Dictionary<Implementation, HashSet<Implementation>>();
+            foreach (var impl in polyImpls)
+            {
+                var succs = new HashSet<Implementation>();
+                foreach (var block in impl.Blocks)
+                    foreach (var call in block.Cmds.OfType<CallCmd>())
+                        if (call.Proc != null && implOfProc.ContainsKey(call.Proc))
+                            succs.Add(implOfProc[call.Proc]);
+                reaches[impl] = succs;
+            }
+
+            var changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var impl in polyImpls)
+                {
+                    var grown = reaches[impl].SelectMany(succ => reaches[succ]).ToList();
+                    foreach (var t in grown)
+                        if (reaches[impl].Add(t)) changed = true;
+                }
+            }
+
+            return polyImpls.Where(impl => reaches[impl].Contains(impl)).ToHashSet();
         }
 
         // Inline procedures called from inside a CodeExpr
