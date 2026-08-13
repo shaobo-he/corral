@@ -482,6 +482,33 @@ namespace cba.Util
             return p;
         }
 
+        // Parse one of the standard libraries that Boogie ships as an embedded resource
+        // (base.bpl, node.bpl, set_size.bpl) out of Boogie.Core.dll. This mirrors the
+        // private ExecutionEngine.ParseLibrary; corral does not go through
+        // ExecutionEngine, which is the only thing that ever reads Options.Libraries.
+        public static Program ParseLibrary(string libraryName)
+        {
+            var libraryFileName = libraryName + ".bpl";
+            var resourceName = "Core." + libraryFileName;
+
+            var asm = System.Reflection.Assembly.Load("Boogie.Core");
+            using (var stream = asm.GetManifestResourceStream(resourceName))
+            {
+                if (stream == null)
+                {
+                    throw new UsageError("Unknown Boogie library: " + libraryName);
+                }
+
+                if (Parser.Parse(new System.IO.StreamReader(stream), libraryFileName,
+                        new List<string>(), out Program library) != 0 || library == null)
+                {
+                    throw new InvalidProg("Parse errors in Boogie library " + libraryName);
+                }
+
+                return library;
+            }
+        }
+
         public static Program ReadAndResolve(string filename, bool doTypecheck = true)
         {
             Program p = ParseProgram(filename);
@@ -510,6 +537,16 @@ namespace cba.Util
             if (p == null)
             {
                 throw new InvalidProg("Parse errors in " + filename);
+            }
+
+            // Splice in the libraries requested with /lib: before resolving: the input's
+            // uses of Vec_Empty and friends have to see the declarations at name
+            // resolution time. Like DesugarUnpackCmds below, this belongs here rather
+            // than at one call site because the trace printer re-reads the input file,
+            // so both views have to end up with the same declarations.
+            foreach (var library in BoogieOptions.Libraries)
+            {
+                p.AddTopLevelDeclarations(ParseLibrary(library).TopLevelDeclarations);
             }
 
             if (ResolveProgram(p, filename))

@@ -29,6 +29,7 @@ namespace cba
             Console.WriteLine(" /noTraceOnDisk     \t Don't write trace files to disk");
             Console.WriteLine(" /printDataValues:n \t Print data values in trace");
             Console.WriteLine(" /v:n               \t Verbose mode level");
+            Console.WriteLine(" /lib:str           \t Include a Boogie standard library (base, node, set_size)");
             Console.WriteLine(" /bopt:str          \t Pass-through options to Boogie");
             Console.WriteLine();
             Console.WriteLine("-------------------------------------------------------------");
@@ -54,6 +55,8 @@ namespace cba
         public int timeout { get; private set; }
 
         public string boogieOpts;
+
+        public HashSet<string> libraries { get; private set; }
 
         public bool useProverEvaluate { get; private set; }
 
@@ -133,6 +136,7 @@ namespace cba
             genCTrace = null;
             noTraceOnDisk = false;
             inputFile = null;
+            libraries = new HashSet<string>();
             arrayTheory = ArrayTheoryOptions.WEAK;
             recursionBound = -1;
             timeout = 0;
@@ -213,6 +217,10 @@ namespace cba
             {
                 var split = flag.Split(sep);
                 verboseMode = Int32.Parse(split[1]);
+            }
+            else if (flag.StartsWith("/lib:"))
+            {
+                libraries.Add(flag.Substring("/lib:".Length));
             }
             else if (flag.StartsWith("/bopt:"))
             {

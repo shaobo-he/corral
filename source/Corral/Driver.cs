@@ -119,6 +119,11 @@ namespace cba
             if (BoogieUtil.InitializeBoogie(boogieOptions))
                 throw new InternalError("Cannot initialize Boogie");
 
+            // Libraries requested with /lib: join the ones a pass-through /bopt:lib: put
+            // there. BoogieUtil.ReadAndOnlyResolve is what reads this; nothing in corral
+            // calls ExecutionEngine, which is Boogie's own (and only) consumer.
+            BoogieUtil.BoogieOptions.Libraries.UnionWith(config.libraries);
+
             if (BoogieUtil.BoogieOptions.UseProverEvaluate)
                 BoogieUtil.BoogieOptions.StratifiedInliningWithoutModels = true;
 
