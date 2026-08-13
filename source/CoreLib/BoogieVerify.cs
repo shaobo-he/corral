@@ -1121,7 +1121,7 @@ namespace cba.Util
                         // Copy, don't alias -- see the comment in RestrictToTrace.addTraceRec.
                         Procedure pex = new Procedure(Token.NoToken, tmp.Name + "_cex", tmp.TypeParameters, tmp.InParams,
                             tmp.OutParams, tmp.IsPure, tmp.Requires, tmp.Preserves, tmp.Ensures,
-                            new List<IdentifierExpr>(tmp.Modifies), tmp.Attributes);
+                            tmp.MeasureCmds, new List<IdentifierExpr>(tmp.Modifies), tmp.Attributes);
                         newProg.AddTopLevelDeclaration(pex);
                     }
                 }

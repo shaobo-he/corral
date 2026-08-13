@@ -1218,7 +1218,7 @@ namespace cba.Util
             return new Procedure(
                 Token.NoToken, name, new List<TypeVariable>(), ins, outs,
                 false, new List<Requires>(), new List<Requires>(), new List<Ensures>(),
-                new List<IdentifierExpr>());
+                new List<MeasureCmd>(), new List<IdentifierExpr>());
         }
         public static Declaration MkProc(string name,
             IEnumerable<Variable> ins, IEnumerable<Variable> outs)
