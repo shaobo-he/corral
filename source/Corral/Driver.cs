@@ -59,6 +59,11 @@ namespace cba
             return version;
         }
 
+        // The prover option that switches Z3's array extensionality off. It is added in
+        // Initialize and taken back out in GetInputProgram when the input turns out to need
+        // extensionality; keep the two uses of this literal together.
+        private const string arrayExtensionalityOff = "O:smt.array.extensional=false";
+
         public static void Initialize(Configs config)
         {
             // Batch-mode GC is best for performance
@@ -108,7 +113,7 @@ namespace cba
 
             if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK)
             {
-                boogieOptions += " /proverOpt:O:smt.array.extensional=false";
+                boogieOptions += " /proverOpt:" + arrayExtensionalityOff;
             }
 
             if (BoogieUtil.InitializeBoogie(boogieOptions))
@@ -415,6 +420,20 @@ namespace cba
                 throw new InvalidProg("Cannot typecheck " + config.inputFile);
             }
 
+            // Some inputs state their facts as whole-map equalities: Boogie's base.bpl is written
+            // that way throughout (IsSubset(a, b) is "MapImp(a, b) == MapConst(true)",
+            // base.bpl:36-39; Set_IsDisjoint compares two Sets, base.bpl:168-172). Establishing
+            // such an equality from pointwise facts needs Z3's array extensionality, which
+            // Initialize switched off above, so those inputs got a spurious "True bug". Switch it
+            // back on for them. Inputs that never compare two maps -- which is all of SMACK's
+            // output -- keep the option and are handed to the prover exactly as before.
+            // Has to run after the typecheck above: the detector reads Expr.Type.
+            if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK && UsesMapEquality(init))
+            {
+                BoogieUtil.BoogieOptions.ProverOptions.RemoveAll(
+                    o => o.Replace(" ", "").Equals(arrayExtensionalityOff, StringComparison.OrdinalIgnoreCase));
+            }
+
             // Get rid of polymorphism. Boogie's own ExecutionEngine does this right after
             // typechecking; corral never did, so a polymorphic declaration (e.g. any of the
             // datatypes in Boogie's base.bpl) reached the prover, where DeclareType threw
@@ -535,6 +554,54 @@ namespace cba
             }
 
             return polyImpls.Where(impl => reaches[impl].Contains(impl)).ToHashSet();
+        }
+
+        // Does the program compare two maps for (dis)equality anywhere? Keying on the
+        // {:builtin "Map..."} functions instead would be both too narrow ("a == b" on [int]int
+        // needs extensionality without mentioning any of them) and too wide (consuming a
+        // MapImp fact pointwise does not).
+        private static bool UsesMapEquality(Program program)
+        {
+            var detector = new MapEqualityDetector();
+            detector.VisitProgram(program);
+            return detector.found;
+        }
+
+        private class MapEqualityDetector : StandardVisitor
+        {
+            public bool found = false;
+
+            public override Expr VisitNAryExpr(NAryExpr node)
+            {
+                if (found) return node;
+
+                if (node.Fun is BinaryOperator op
+                    && (op.Op == BinaryOperator.Opcode.Eq || op.Op == BinaryOperator.Opcode.Neq))
+                {
+                    foreach (var arg in node.Args)
+                    {
+                        if (arg != null && arg.Type != null && containsMap(arg.Type, new HashSet<TypeCtorDecl>()))
+                            found = true;
+                    }
+                }
+                return base.VisitNAryExpr(node);
+            }
+
+            // Equality at a datatype counts as well: the prover reduces it to equality of the
+            // constructor arguments, so comparing two Sets ("datatype Set<T> { Set(val: [T]bool) }",
+            // base.bpl:151) still needs extensionality. Over-approximating here is free: the cost
+            // of enabling extensionality on a program that does not need it is unmeasurable.
+            private static bool containsMap(Microsoft.Boogie.Type type, HashSet<TypeCtorDecl> seen)
+            {
+                if (type.IsMap) return true;
+                if (!type.IsCtor) return false;
+
+                var decl = type.AsCtor.Decl as DatatypeTypeCtorDecl;
+                if (decl == null || !seen.Add(decl)) return false;
+
+                return decl.Constructors.Any(ctor =>
+                    ctor.InParams.Any(field => containsMap(field.TypedIdent.Type, seen)));
+            }
         }
 
         // Inline procedures called from inside a CodeExpr

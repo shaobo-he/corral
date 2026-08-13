@@ -20,7 +20,7 @@ namespace cba
             Console.WriteLine(" /main:str          \t Sets main procedure name");
             Console.WriteLine(" /recursionBound:int\t Set recursion depth bound");
             Console.WriteLine(" /trackAllVars      \t Track all shared variables.");
-            Console.WriteLine(" /useArrayTheory    \t Use native array theory for z3.");
+            Console.WriteLine(" /useArrayTheory    \t Force Z3 array extensionality on (auto-enabled when the input compares maps).");
             Console.WriteLine(" /useProverEvaluate \t Use prover evaluate mode.");
             Console.WriteLine(" /timeLimit:n       \t Set Z3 timeout to n sec (default 500)");
             Console.WriteLine(" /cex:n             \t Max counterexamples");
