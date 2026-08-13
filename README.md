@@ -8,8 +8,8 @@ tailored for the [SMACK](https://github.com/smackers/smack) verification
 toolchain. It keeps only the code paths that SMACK actually exercises (see
 SMACK's `top.py` and `svcomp/utils.py`) and drops everything else.
 
-> **Branch note.** This is the `mini-corral-boogie-3.5.6-refresh` branch: the
-> `mini-corral` baseline ported from **Boogie 2.9.1 to Boogie 3.5.6**. Its
+> **Branch note.** This is the `mini-corral-boogie-3.5.7` branch: the
+> `mini-corral` baseline ported from **Boogie 2.9.1 to Boogie 3.5.7**. Its
 > verification behavior is meant to match the `mini-corral` branch; only the
 > Boogie dependency and the code adapting to its API differ.
 
@@ -22,7 +22,7 @@ http://research.microsoft.com/en-us/projects/verifierq
 ## What is different from upstream Corral
 
 Relative to `boogie-org/corral` master, this branch removes about 45k lines
-from `source/` (133 C# files down to 29). The verification behavior on SMACK's
+from `source/` (61 C# files down to 29). The verification behavior on SMACK's
 invocations is unchanged — every removal was validated against a golden-output
 harness (including SV-COMP mode) and the regression suite.
 
@@ -47,11 +47,11 @@ The stdout signals SMACK greps for are preserved verbatim: `Exhausted recursion
 bound of N`, `Verifying program while tracking`, `Program has no bugs`, and
 `This assertion can fail`.
 
-## The Boogie 3.5.6 port
+## The Boogie 3.5.7 port
 
 The `Boogie.ExecutionEngine` package reference in
 [`source/Directory.Build.props`](source/Directory.Build.props) is pinned to
-**3.5.6** (`mini-corral` is on 2.9.1). Adapting to that API required, among
+**3.5.7** (`mini-corral` is on 2.9.1). Adapting to that API required, among
 other things:
 
 - Keeping `SIBoolControlVC` paired with prover evaluation across program, path,
@@ -61,6 +61,8 @@ other things:
   exhaustion into `Inconclusive`.
 - Preserving legacy async-call handling during resolve/typecheck, and
   normalizing procedure links before modifies inference.
+- Passing `MeasureCmds`, which 3.5.7 made a required `Procedure` constructor
+  parameter, at all eight places corral builds one.
 
 ## Building and running
 
@@ -109,7 +111,7 @@ Run `corral` with no arguments for the same list.
 `/flags:filename` reads additional flags from `filename`.
 
 **`/useArrayTheory` means something different here than on `mini-corral`.**
-Boogie 3.5.6 no longer takes a `/useArrayTheory` switch — array theory is always
+Boogie 3.5.7 no longer takes a `/useArrayTheory` switch — array theory is always
 on — so the port stopped forwarding one. What is left is the extensionality
 setting: the default (flag absent) still adds
 `/proverOpt:O:smt.array.extensional=false`, and passing `/useArrayTheory` now
@@ -118,7 +120,7 @@ still accepted and parsed; it just no longer switches array theory on.
 
 ## Regressions
 
-The tests live in `test/regression` (34 cases listed in `Files`; each line is a
+The tests live in `test/regression` (44 cases listed in `Files`; each line is a
 `.bpl` path plus the expected outcome, `b` for buggy or `c` for correct). Run
 them all with:
 
@@ -126,8 +128,8 @@ them all with:
 $ cd test/regression && perl check.pl
 ```
 
-Set `CONFIGURATION=Release` to test the release build, or pass a directory name
-to `check.pl` to run just that subset. A single test can also be run directly:
+Set `CONFIGURATION=Release` to test the release build. A single test can also be
+run directly:
 
 ```console
 $ cd test/regression/001 && ${CORRAL_EXE} 001.bpl /flags:config
@@ -138,5 +140,5 @@ Tests for removed features (`/track`, `/concat`, `/cooperative`,
 concurrency-dependent tests have been pruned along with the code.
 
 [license-badge]: https://img.shields.io/github/license/shaobo-he/corral?color=blue
-[ci]:            https://github.com/shaobo-he/corral/actions/workflows/test.yml?query=branch%3Amini-corral-boogie-3.5.6-refresh
-[ci-badge]:      https://github.com/shaobo-he/corral/actions/workflows/test.yml/badge.svg?branch=mini-corral-boogie-3.5.6-refresh
+[ci]:            https://github.com/shaobo-he/corral/actions/workflows/test.yml?query=branch%3Amini-corral-boogie-3.5.7
+[ci-badge]:      https://github.com/shaobo-he/corral/actions/workflows/test.yml/badge.svg?branch=mini-corral-boogie-3.5.7
