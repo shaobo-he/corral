@@ -11,7 +11,7 @@ SMACK's `top.py` and `svcomp/utils.py`) and drops everything else.
 > **Branch note.** This branch builds on `mini-corral-boogie-3.5.6-refresh`,
 > restores the simplified `mini-corral` DAG-inlining implementation, and adds
 > sequential plus local-multicore HYDRA partition search. It targets
-> **Boogie 3.5.6 / .NET 8**.
+> **Boogie 3.5.7 / .NET 8**.
 
 Corral is a solver for the reachability modulo theories problem: given a Boogie
 program, it looks for an execution that reaches an `assert` violation, using
@@ -49,11 +49,11 @@ The stdout signals SMACK greps for are preserved verbatim: `Exhausted recursion
 bound of N`, `Verifying program while tracking`, `Program has no bugs`, and
 `This assertion can fail`.
 
-## The Boogie 3.5.6 port
+## The Boogie 3.5.7 port
 
 The `Boogie.ExecutionEngine` package reference in
 [`source/Directory.Build.props`](source/Directory.Build.props) is pinned to
-**3.5.6** (`mini-corral` is on 2.9.1). Adapting to that API required, among
+**3.5.7** (`mini-corral` is on 2.9.1). Adapting to that API required, among
 other things:
 
 - Keeping `SIBoolControlVC` paired with prover evaluation across program, path,
@@ -63,6 +63,8 @@ other things:
   exhaustion into `Inconclusive`.
 - Preserving legacy async-call handling during resolve/typecheck, and
   normalizing procedure links before modifies inference.
+- Passing `MeasureCmds`, which 3.5.7 made a required `Procedure` constructor
+  parameter, at all eight places corral builds one.
 
 ## Building and running
 
@@ -126,7 +128,7 @@ decisions and known expansion prefix on the master prover; any remaining inlinin
 stays inside that leaf and produces the normal Corral trace.
 
 **`/useArrayTheory` means something different here than on `mini-corral`.**
-Boogie 3.5.6 no longer takes a `/useArrayTheory` switch — array theory is always
+Boogie 3.5.7 no longer takes a `/useArrayTheory` switch — array theory is always
 on — so the port stopped forwarding one. What is left is the extensionality
 setting: the default (flag absent) still adds
 `/proverOpt:O:smt.array.extensional=false`, and passing `/useArrayTheory` now
