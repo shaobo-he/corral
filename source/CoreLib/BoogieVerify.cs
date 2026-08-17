@@ -37,6 +37,7 @@ namespace cba.Util
         public static bool useDuality = false;
         public static HashSet<string> procsHitRecBound = new HashSet<string>();
         public static bool PrintImplsBeingVerified = false;
+        private static int outlineDumpCounter;
 
         // TODO: move this elsewhere
         public static HashSet<string> ignoreAssertMethods;
@@ -89,6 +90,11 @@ namespace cba.Util
             timedOut = new List<string>();
             Debug.Assert(program != null);
 
+            // Dispatcher outlining, when enabled, has already run before variable
+            // slicing.  Snapshot the outlined program so trace reconstruction knows
+            // its synthetic implementations and exact source-labelled blocks.
+            var outlineDumpId = outlineDumpCounter++;
+
             // Make a copy of the input program
             var duper = new FixedDuplicator(true);
             var origProg = new Dictionary<string, Implementation>();
@@ -116,6 +122,7 @@ namespace cba.Util
             var extractionInfo = LoopExtractor.ExtractLoops(BoogieUtil.BoogieOptions, program);
             BoogieUtil.ResolveProgram(program);
             BoogieUtil.TypecheckProgram(program);
+            DumpOutlineProgram(program, outlineDumpId, "loops");
 
             // Boogie 3.5.6's LoopExtractor does not always propagate modifies
             // from callees onto extracted loop procedures. Stratified inlining
@@ -355,6 +362,18 @@ namespace cba.Util
             BoogieUtil.BoogieOptions.TheProverFactory.Close();
 
             return ret;
+        }
+
+        private static void DumpOutlineProgram(Program program, int id, string stage)
+        {
+            if (CoreLib.DispatcherOutlining.ConfiguredMode == CoreLib.DispatcherOutlining.Mode.Disabled)
+                return;
+            var directory = Environment.GetEnvironmentVariable("CORRAL_SI_OUTLINE_DUMP");
+            if (string.IsNullOrWhiteSpace(directory))
+                return;
+            Directory.CreateDirectory(directory);
+            BoogieUtil.PrintProgram(program, Path.Combine(directory,
+                "outline-" + id.ToString("D3") + "-" + stage + ".bpl"));
         }
 
         private class BoogieVerifyCallback : VerifierCallback

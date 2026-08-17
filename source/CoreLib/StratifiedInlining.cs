@@ -102,6 +102,12 @@ namespace CoreLib
 
         // verification start time
         DateTime startTime;
+        private SiVerificationProfile profile;
+        private int profileOpenCalls;
+        private int profileBlockedCalls;
+        private string profileMode = "SI";
+        private readonly string profileProverLog;
+        private readonly bool bitwiseLast;
 
         public HashSet<string> GetCallTree()
         {
@@ -113,6 +119,14 @@ namespace CoreLib
         {
             stats = new Stats();
             InstallCodeExprConverter();
+            profileProverLog = logFilePath;
+            bitwiseLast = ReadEnvironmentFlag("CORRAL_SI_BITWISE_LAST");
+            var outlineMode = Environment.GetEnvironmentVariable("CORRAL_SI_OUTLINE");
+            if (!string.IsNullOrWhiteSpace(outlineMode) &&
+                !outlineMode.Equals("disabled", StringComparison.OrdinalIgnoreCase))
+                profileMode += "+OUTLINE_" + outlineMode.ToUpperInvariant().Replace('-', '_');
+            if (bitwiseLast)
+                profileMode += "+BITWISE_LAST";
 
             this.extraRecBound = new Dictionary<string, int>();
             program.TopLevelDeclarations.OfType<Implementation>()
@@ -204,101 +218,190 @@ namespace CoreLib
         public Outcome Fwd(HashSet<StratifiedCallSite> openCallSites, StratifiedInliningErrorReporter reporter, bool main, int recBound)
         {
             Outcome outcome = Outcome.Inconclusive;
+            var completedNormally = false;
+            profile?.StartFwd(openCallSites.Count);
 
-            ForceInline(openCallSites, recBound);
-
-            ReachedRecursionBound = false;
-            var boundHit = false;
-            while (true)
+            try
             {
-                // Check timeout
-                if (BoogieUtil.BoogieOptions.TimeLimit != 0)
+                ForceInline(openCallSites, recBound);
+
+                ReachedRecursionBound = false;
+                var boundHit = false;
+                while (true)
                 {
-                    if ((DateTime.UtcNow - startTime).TotalSeconds > BoogieUtil.BoogieOptions.TimeLimit)
+                    // Check timeout
+                    if (BoogieUtil.BoogieOptions.TimeLimit != 0)
                     {
-                        return Outcome.TimedOut;
+                        if ((DateTime.UtcNow - startTime).TotalSeconds > BoogieUtil.BoogieOptions.TimeLimit)
+                        {
+                            outcome = Outcome.TimedOut;
+                            completedNormally = true;
+                            return outcome;
+                        }
                     }
-                }
 
-                MacroSI.PRINT_DEBUG("  - underapprox");
-                boundHit = false;
+                    var openBefore = openCallSites.Count;
+                    profile?.StartIteration(openBefore);
+                    var expansionStart = profile == null ? stats.numInlined : profile.TotalInlined;
+                    long underMilliseconds;
+                    long overMilliseconds = 0;
+                    var overResult = "";
 
-                // underapproximate query
-                Push();
+                    MacroSI.PRINT_DEBUG("  - underapprox");
+                    boundHit = false;
 
-
-                foreach (StratifiedCallSite cs in openCallSites)
-                {
-                    prover.Assert(cs.callSiteExpr, false);
-                }
-
-                MacroSI.PRINT_DEBUG("    - check");
-                reporter.reportTrace = main;
-                outcome = CheckVC(reporter);
-                Pop();
-                MacroSI.PRINT_DEBUG("    - checked: " + outcome);
-                if (outcome != Outcome.Correct) break;
-
-                MacroSI.PRINT_DEBUG("  - overapprox");
-                // overapproximate query
-                Push();
-                foreach (StratifiedCallSite cs in openCallSites)
-                {
-                    // Stop if we've reached the recursion bound or
-                    // the stack-depth bound (if there is one)
-                    if (HasExceededRecursionDepth(cs, recBound) ||
-                        (StackDepthBound > 0 &&
-                        StackDepth(cs) > StackDepthBound))
+                    // underapproximate query
+                    Push();
+                    foreach (StratifiedCallSite cs in openCallSites)
                     {
                         prover.Assert(cs.callSiteExpr, false);
-                        procsHitRecBound.Add(cs.callSite.calleeName);
-                        //Console.WriteLine("Proc {0} hit rec bound of {1}", cs.callSite.calleeName, recBound);
-                        boundHit = true;
                     }
-                }
-                MacroSI.PRINT_DEBUG("    - check");
-                reporter.reportTrace = false;
-                reporter.callSitesToExpand = new List<StratifiedCallSite>();
-                outcome = CheckVC(reporter);
-                Pop();
-                MacroSI.PRINT_DEBUG("    - checked: " + outcome);
-                if (outcome != Outcome.Errors)
-                {
-                    if (boundHit && outcome == Outcome.Correct)
+
+                    MacroSI.PRINT_DEBUG("    - check");
+                    reporter.reportTrace = main;
+                    profileOpenCalls = openCallSites.Count;
+                    profileBlockedCalls = 0;
+                    outcome = CheckVC(reporter, SiCheckKind.Under, out underMilliseconds);
+                    Pop();
+                    MacroSI.PRINT_DEBUG("    - checked: " + outcome);
+                    if (outcome != Outcome.Correct)
                     {
-                        // Correct under the current bound, but we stopped short of
-                        // some call sites: a bounded pass, not a solver failure.
+                        profile?.RecordIteration(outcome.ToString(), underMilliseconds, overResult,
+                            overMilliseconds, openBefore, 0, expansionStart, 0);
+                        break;
+                    }
+
+                    MacroSI.PRINT_DEBUG("  - overapprox");
+                    // overapproximate query
+                    Push();
+                    var blockedThisQuery = 0;
+                    foreach (StratifiedCallSite cs in openCallSites)
+                    {
+                        // Stop if we've reached the recursion bound or
+                        // the stack-depth bound (if there is one)
+                        var recursionExceeded = HasExceededRecursionDepth(cs, recBound);
+                        var stackExceeded = StackDepthBound > 0 && StackDepth(cs) > StackDepthBound;
+                        if (recursionExceeded || stackExceeded)
+                        {
+                            prover.Assert(cs.callSiteExpr, false);
+                            procsHitRecBound.Add(cs.callSite.calleeName);
+                            boundHit = true;
+                            blockedThisQuery++;
+                            if (profile != null)
+                            {
+                                var stackDepth = StackDepth(cs);
+                                var recursionDepth = RecursionDepth(cs);
+                                var reason = recursionExceeded && stackExceeded ? "recursion+stack" :
+                                    recursionExceeded ? "recursion" : "stack";
+                                profile.RecordBoundHit(cs.callSite.calleeName, GetPersistentID(cs),
+                                    stackDepth, recursionDepth, reason);
+                            }
+                        }
+                    }
+                    MacroSI.PRINT_DEBUG("    - check");
+                    reporter.reportTrace = false;
+                    reporter.callSitesToExpand = new List<StratifiedCallSite>();
+                    profileOpenCalls = openCallSites.Count;
+                    profileBlockedCalls = blockedThisQuery;
+                    outcome = CheckVC(reporter, SiCheckKind.Over, out overMilliseconds);
+                    overResult = outcome.ToString();
+                    Pop();
+                    MacroSI.PRINT_DEBUG("    - checked: " + outcome);
+                    if (outcome != Outcome.Errors)
+                    {
+                        if (boundHit && outcome == Outcome.Correct)
+                        {
+                            // Correct under the current bound, but we stopped short of
+                            // some call sites: a bounded pass, not a solver failure.
+                            outcome = Outcome.Inconclusive;
+                            ReachedRecursionBound = true;
+                        }
+
+                        profile?.RecordIteration(Outcome.Correct.ToString(), underMilliseconds,
+                            overResult, overMilliseconds, openBefore, 0, expansionStart, 0);
+                        break; // done
+                    }
+                    if (reporter.callSitesToExpand.Count == 0)
+                    {
                         outcome = Outcome.Inconclusive;
-                        ReachedRecursionBound = true;
+                        profile?.RecordIteration(Outcome.Correct.ToString(), underMilliseconds,
+                            overResult, overMilliseconds, openBefore, 0, expansionStart, 0);
+                        completedNormally = true;
+                        return outcome;
                     }
 
-                    break; // done
-                }
-                if (reporter.callSitesToExpand.Count == 0)
-                    return Outcome.Inconclusive;
-
-                var toExpand = reporter.callSitesToExpand;
-                foreach (var scs in toExpand)
-                {
-                    openCallSites.Remove(scs);
-                    var svc = Expand(scs);
-                    if (svc != null)
+                    var requestedToExpand = reporter.callSitesToExpand;
+                    var toExpand = requestedToExpand;
+                    if (profile != null)
                     {
-                        openCallSites.UnionWith(svc.CallSites);
+                        profile.RecordOverRequest(requestedToExpand.Select(scs =>
+                            new SiVerificationProfile.CallsitePoint(scs.callSite.calleeName,
+                                GetPersistentID(scs), StackDepth(scs), RecursionDepth(scs), true)));
                     }
-                }
 
-                ForceInline(openCallSites, recBound);
+                    if (bitwiseLast)
+                    {
+                        var ordinary = requestedToExpand.Where(scs => !IsDeferredBitwiseHelper(scs)).ToList();
+                        var helpers = requestedToExpand.Where(IsDeferredBitwiseHelper).ToList();
+                        profile?.RecordBitwiseRequest(helpers.Count);
+                        if (ordinary.Count > 0 && helpers.Count > 0)
+                        {
+                            toExpand = ordinary;
+                            profile?.RecordBitwiseDeferral(helpers.Select(scs =>
+                                new SiVerificationProfile.CallsitePoint(scs.callSite.calleeName,
+                                    GetPersistentID(scs), StackDepth(scs), RecursionDepth(scs), true)),
+                                ordinary.Count);
+                        }
+                    }
+
+                    var newOpenCalls = 0;
+                    foreach (var scs in toExpand)
+                    {
+                        openCallSites.Remove(scs);
+                        var svc = Expand(scs, "OVER");
+                        if (svc != null)
+                        {
+                            newOpenCalls += svc.CallSites.Count;
+                            openCallSites.UnionWith(svc.CallSites);
+                        }
+                    }
+
+                    newOpenCalls += ForceInline(openCallSites, recBound);
+                    profile?.RecordIteration(Outcome.Correct.ToString(), underMilliseconds,
+                        overResult, overMilliseconds, openBefore, requestedToExpand.Count, expansionStart,
+                        newOpenCalls);
+                }
+                completedNormally = true;
+                return outcome;
             }
-            return outcome;
+            finally
+            {
+                profile?.EndFwd(completedNormally ? outcome.ToString() : "Exception",
+                    openCallSites.Count);
+            }
         }
 
-        void ForceInline(HashSet<StratifiedCallSite> openCallSites, int recBound)
+        int ForceInline(HashSet<StratifiedCallSite> openCallSites, int recBound)
         {
+            var newOpenCalls = 0;
             do
             {
                 // force inline
                 var toExpand = new HashSet<StratifiedCallSite>(openCallSites.Where(cs => forceInlineProcs.Contains(cs.callSite.calleeName)));
+                if (profile != null)
+                {
+                    foreach (var cs in toExpand)
+                    {
+                        var recursionExceeded = HasExceededRecursionDepth(cs, recBound);
+                        var stackExceeded = StackDepthBound > 0 && StackDepth(cs) > StackDepthBound;
+                        if (!recursionExceeded && !stackExceeded)
+                            continue;
+                        var reason = recursionExceeded && stackExceeded ? "force-recursion+stack" :
+                            recursionExceeded ? "force-recursion" : "force-stack";
+                        profile.RecordBoundHit(cs.callSite.calleeName, GetPersistentID(cs),
+                            StackDepth(cs), RecursionDepth(cs), reason);
+                    }
+                }
                 // filter away ones that have reached the bound
                 toExpand.RemoveWhere(cs => HasExceededRecursionDepth(cs, recBound) ||
                         (StackDepthBound > 0 &&
@@ -308,14 +411,16 @@ namespace CoreLib
                 foreach (var scs in toExpand)
                 {
                     openCallSites.Remove(scs);
-                    var svc = Expand(scs);
+                    var svc = Expand(scs, "FORCE");
                     if (svc != null)
                     {
+                        newOpenCalls += svc.CallSites.Count;
                         openCallSites.UnionWith(svc.CallSites);
                     }
                 }
 
             } while (true);
+            return newOpenCalls;
         }
 
         /* verification */
@@ -342,6 +447,14 @@ namespace CoreLib
             StratifiedVC svc = new StratifiedVC(implName2StratifiedInliningInfo[impl.Name], implementations);
             mainVC = svc;
             HashSet<StratifiedCallSite> openCallSites = new HashSet<StratifiedCallSite>(svc.CallSites);
+            if (SiProfile.IsEnabled)
+            {
+                var rootVcSize = SizeComputingVisitor.ComputeSize(svc.vcexpr);
+                profile = new SiVerificationProfile(impl.Name, profileMode, rootVcSize,
+                    openCallSites.Count, profileProverLog);
+                foreach (var callsite in openCallSites)
+                    profile.ObserveCallsite(StackDepth(callsite), RecursionDepth(callsite));
+            }
             prover.Assert(svc.vcexpr, true);
 
             Outcome outcome;
@@ -357,7 +470,7 @@ namespace CoreLib
                 {
                     if (HasExceededRecursionDepth(scs, BoogieUtil.RecursionBound)) continue;
 
-                    var ss = Expand(scs);
+                    var ss = Expand(scs, "EAGER");
                     if (ss != null) nextOpenCallSites.UnionWith(ss.CallSites);
                 }
                 openCallSites = nextOpenCallSites;
@@ -375,7 +488,7 @@ namespace CoreLib
                     {
                         if (!cba.Util.BoogieVerify.options.CallTree.Contains(GetPersistentID(scs))) continue;
                         toRemove.Add(scs);
-                        var ss = Expand(scs);
+                        var ss = Expand(scs, "CALL_TREE");
                         if (ss != null) toAdd.UnionWith(ss.CallSites);
                         MacroSI.PRINT_DETAIL(string.Format("Eagerly inlining: {0}", scs.callSite.calleeName), 2);
                     }
@@ -392,15 +505,18 @@ namespace CoreLib
             while (true)
             {
                 procsHitRecBound = new HashSet<string>();
+                profile?.StartBound(currRecursionBound, openCallSites.Count);
 
                 outcome = Fwd(openCallSites, reporter, true, currRecursionBound);
+                var exhaustedBound = outcome == Outcome.Inconclusive && procsHitRecBound.Count > 0;
+                profile?.EndBound(outcome.ToString(), exhaustedBound, openCallSites.Count);
 
                 // timeout or OOM?
                 if (outcome == Outcome.OutOfMemory || outcome == Outcome.TimedOut)
                     break;
 
                 // Boogie 3.5.6 represents bound exhaustion as Inconclusive.
-                if (outcome == Outcome.Inconclusive && procsHitRecBound.Count > 0 && currRecursionBound < BoogieUtil.RecursionBound)
+                if (exhaustedBound && currRecursionBound < BoogieUtil.RecursionBound)
                 {
                     if (StratifiedInliningVerbose > 0)
                         Console.WriteLine("SI: Exhausted recursion bound of {0}", currRecursionBound);
@@ -433,18 +549,22 @@ namespace CoreLib
             }
             #endregion
 
+            profile?.Finish(outcome.ToString(), openCallSites.Count);
             return outcome;
         }
 
         // Inline
-        private StratifiedVC Expand(StratifiedCallSite scs)
+        private StratifiedVC Expand(StratifiedCallSite scs, string profileReason)
         {
-            return Expand(scs, null, true, false);
+            return Expand(scs, null, true, false, profileReason);
         }
 
-        private StratifiedVC Expand(StratifiedCallSite scs, string name, bool DoSubst, bool dontMerge)
+        private StratifiedVC Expand(StratifiedCallSite scs, string name, bool DoSubst, bool dontMerge,
+            string profileReason)
         {
             MacroSI.PRINT_DEBUG("    ~ extend callsite " + scs.callSite.calleeName);
+            var stackDepth = profile == null ? 0 : StackDepth(scs);
+            var recursionDepth = profile == null ? 0 : RecursionDepth(scs);
             stats.numInlined++;
             var svc = new StratifiedVC(implName2StratifiedInliningInfo[scs.callSite.calleeName], implementations);
 
@@ -462,7 +582,8 @@ namespace CoreLib
 
             prover.LogComment("Inlining " + scs.callSite.calleeName + " from " + (parent.ContainsKey(scs) ? attachedVC[parent[scs]].info.Implementation.Name : "main"));
 
-            stats.vcSize += SizeComputingVisitor.ComputeSize(toassert);
+            var vcAdded = SizeComputingVisitor.ComputeSize(toassert);
+            stats.vcSize += vcAdded;
 
             if (name != null)
                 prover.AssertNamed(toassert, true, name);
@@ -471,7 +592,29 @@ namespace CoreLib
 
             attachedVC[scs] = svc;
             attachedVCInv[svc] = scs;
+            if (profile != null)
+            {
+                profile.RecordExpansion(scs.callSite.calleeName, profileReason, stackDepth,
+                    recursionDepth, vcAdded, svc.CallSites.Count, true);
+                if (IsDeferredBitwiseHelper(scs))
+                    profile.RecordBitwiseExpansion(GetPersistentID(scs), vcAdded);
+                foreach (var newCallSite in svc.CallSites)
+                    profile.ObserveCallsite(StackDepth(newCallSite), RecursionDepth(newCallSite));
+            }
             return svc;
+        }
+
+        private static bool IsDeferredBitwiseHelper(StratifiedCallSite callsite)
+        {
+            var callee = callsite.callSite.calleeName;
+            return callee == "__SMACK_and32" || callee == "__SMACK_or32";
+        }
+
+        private static bool ReadEnvironmentFlag(string name)
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            return !string.IsNullOrWhiteSpace(value) && value != "0" &&
+                !value.Equals("false", StringComparison.OrdinalIgnoreCase);
         }
 
         // Return unique call ID of a call site
@@ -528,11 +671,29 @@ namespace CoreLib
 
         private Outcome CheckVC(ProverInterface.ErrorHandler reporter)
         {
+            return CheckVC(reporter, SiCheckKind.Other, out _);
+        }
+
+        private Outcome CheckVC(ProverInterface.ErrorHandler reporter, SiCheckKind kind, out long elapsedMilliseconds)
+        {
             stats.calls++;
+            var queryId = SiProfile.IsEnabled ? SiProfile.NextQueryId() : 0;
+            if (queryId != 0)
+                prover.LogComment(string.Format("CORRAL_SI_QUERY_BEGIN id={0} kind={1} phase={2} bound={3} iteration={4}",
+                    queryId, kind, SiProfile.Phase, profile == null ? 0 : profile.Bound,
+                    profile == null ? 0 : profile.Iteration));
+            profile?.RecordQueryStart(queryId, kind, profileOpenCalls, profileBlockedCalls);
             var stopwatch = Stopwatch.StartNew();
             var (solverOutcome, _) = prover.CheckAssumptions(new List<VCExpr>(), reporter, CancellationToken.None).GetAwaiter().GetResult();
             stats.time += stopwatch.ElapsedTicks;
-            return ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
+            elapsedMilliseconds = (long)Math.Round(stopwatch.Elapsed.TotalMilliseconds);
+            var outcome = ConditionGeneration.ProverInterfaceOutcomeToConditionGenerationOutcome(solverOutcome);
+            if (queryId != 0)
+                prover.LogComment(string.Format("CORRAL_SI_QUERY_END id={0} kind={1} result={2} elapsed_ms={3}",
+                    queryId, kind, outcome, elapsedMilliseconds));
+            profile?.RecordQuery(queryId, kind, outcome.ToString(), elapsedMilliseconds,
+                profileOpenCalls, profileBlockedCalls);
+            return outcome;
         }
 
         public override Outcome FindLeastToVerify(Implementation impl, ref HashSet<string> allBoolVars)
@@ -551,6 +712,12 @@ namespace CoreLib
 
             StratifiedVC svc = getSVC(impl.Name);
             HashSet<StratifiedCallSite> openCallSites = new HashSet<StratifiedCallSite>(svc.CallSites);
+            if (SiProfile.IsEnabled)
+            {
+                profile = new SiVerificationProfile(impl.Name, "FIND_LEAST",
+                    SizeComputingVisitor.ComputeSize(svc.vcexpr), openCallSites.Count, profileProverLog);
+            }
+            profileOpenCalls = openCallSites.Count;
             prover.Assert(svc.vcexpr, true);
 
             HashSet<StratifiedCallSite> nextOpenCallSites;
@@ -570,6 +737,7 @@ namespace CoreLib
                 }
                 openCallSites = nextOpenCallSites;
             }
+            profileOpenCalls = 0;
 
             // Find all the boolean constants
             var allConsts = new HashSet<VCExprVar>();
@@ -594,6 +762,8 @@ namespace CoreLib
 
             Pop();
 
+            profileOpenCalls = 0;
+            profile?.Finish(Outcome.Correct.ToString(), 0);
             return Outcome.Correct;
         }
 

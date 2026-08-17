@@ -50,6 +50,10 @@ namespace cba
                 Console.WriteLine("Stopping: {0}", e.Message);
                 return 1;
             }
+            finally
+            {
+                CoreLib.SiProfile.EndRun("process_exit");
+            }
         }
 
         public static string VersionInfo()
@@ -129,6 +133,7 @@ namespace cba
             Console.WriteLine("Corral program verifier version {0}", VersionInfo());
 
             Configs config = Configs.parseCommandLine(args);
+            CoreLib.SiProfile.StartRun(config.inputFile);
             BoogieUtil.BoogieOptions = new CommandLineOptions(Console.Out, new ConsolePrinter());
 
             if (!System.IO.File.Exists(config.inputFile))
@@ -205,6 +210,16 @@ namespace cba
             curr = seqInstr.run(curr);
             initialTrackedVars.Add(seqInstr.assertsPassedName);
 
+            // Sequential instrumentation makes assertion/error continuations
+            // explicit.  Outlining here sees complete dispatcher arms while
+            // still preceding slicing, loop extraction, passification and VCGen.
+            CoreLib.DispatcherOutliningPass outline = null;
+            if (CoreLib.DispatcherOutlining.ConfiguredMode != CoreLib.DispatcherOutlining.Mode.Disabled)
+            {
+                outline = new CoreLib.DispatcherOutliningPass();
+                curr = outline.run(curr);
+            }
+
             // Flag settings for sequential programs
             VerificationPass.usePruning = false;
 
@@ -219,7 +234,7 @@ namespace cba
             #endregion
 
             // For debugging, create an Action for printing a trace at the source level
-            var passes = new List<CompilerPass>(new CompilerPass[] { seqInstr, prune, rcalls, apass });
+            var passes = new List<CompilerPass>(new CompilerPass[] { outline, seqInstr, prune, rcalls, apass });
             var printTrace = new Action<ErrorTrace, string>((trace, fileName) =>
                 {
                     if (GlobalConfig.genCTrace == null)
@@ -253,6 +268,8 @@ namespace cba
 
                 if (cexTrace != null)
                 {
+                    if (outline != null)
+                        cexTrace = outline.mapBackTrace(cexTrace);
                     cexTrace = seqInstr.mapBackTrace(cexTrace);
                     cexTrace = prune.mapBackTrace(cexTrace);
                     cexTrace = rcalls.mapBackTrace(cexTrace);
@@ -526,6 +543,21 @@ namespace cba
                 refinementState.Push();
                 PersistentCBAProgram counterexample = null;
 
+                if (CoreLib.SiProfile.IsEnabled)
+                {
+                    var trackedVarCount = refinementState.getVars().Variables.Count;
+                    var totalVarCount = refinementState.getVars(refinementState.allTokens).Variables.Count;
+                    CoreLib.SiProfile.NextCegarIteration(trackedVarCount, totalVarCount);
+                    CoreLib.SiProfile.Write("CEGAR_ITER",
+                        ("reason", "start"),
+                        ("tracked_vars", CoreLib.SiProfile.Number(trackedVarCount)),
+                        ("total_vars", CoreLib.SiProfile.Number(totalVarCount)));
+                }
+
+                long programVerifyMs = 0;
+                long concretizeMs = 0;
+                long refinementMs = 0;
+
                 if (GlobalConfig.timeOutReached())
                     throw new InternalError("Timeout reached!");
 
@@ -537,8 +569,15 @@ namespace cba
                 // transformed to "counterexample"
                 InsertionTrans tinfo = null;
 
-                bool success =
-                    CBADriver.checkProgram(ref prog, refinementState.getVars(), true, out counterexample, out tinfo, out cexTrace);
+                bool success;
+                var programTimer = CoreLib.SiProfile.IsEnabled ? Stopwatch.StartNew() : null;
+                using (CoreLib.SiProfile.EnterPhase("PROGRAM"))
+                {
+                    success = CBADriver.checkProgram(ref prog, refinementState.getVars(), true,
+                        out counterexample, out tinfo, out cexTrace);
+                }
+                if (programTimer != null)
+                    programVerifyMs = (long)Math.Round(programTimer.Elapsed.TotalMilliseconds);
 
                 if (success)
                 {
@@ -548,6 +587,12 @@ namespace cba
                         Log.WriteLine("Reached recursion bound of " + GlobalConfig.recursionBound.ToString());
                     }
                     outcomeSuccess = true;
+                    CoreLib.SiProfile.Write("CEGAR_ITER",
+                        ("reason", "end"),
+                        ("result", CBADriver.reachedBound ? "SAFE_REACHED_BOUND" : "SAFE"),
+                        ("program_verify_ms", CoreLib.SiProfile.Number(programVerifyMs)),
+                        ("concretize_ms", "0"),
+                        ("refinement_ms", "0"));
                     break;
                 }
 
@@ -558,16 +603,29 @@ namespace cba
                 refinementState.Add(new TraceMapping(tinfo));
 
                 // Check if true bug. Otherwise, gather variables to track
-                success = checkAndRefinePathFewPasses(counterexample, refinementState, out cexTrace);
+                success = checkAndRefinePathFewPasses(counterexample, refinementState, out cexTrace,
+                    out concretizeMs, out refinementMs);
 
                 if (!success)
                 {
                     // Generate cex in the original program
                     cexTrace = tinfo.mapBackTrace(cexTrace);
                     outcomeSuccess = false;
+                    CoreLib.SiProfile.Write("CEGAR_ITER",
+                        ("reason", "end"),
+                        ("result", "TRUE_BUG"),
+                        ("program_verify_ms", CoreLib.SiProfile.Number(programVerifyMs)),
+                        ("concretize_ms", CoreLib.SiProfile.Number(concretizeMs)),
+                        ("refinement_ms", CoreLib.SiProfile.Number(refinementMs)));
                     break;
                 }
 
+                CoreLib.SiProfile.Write("CEGAR_ITER",
+                    ("reason", "end"),
+                    ("result", "REFINED"),
+                    ("program_verify_ms", CoreLib.SiProfile.Number(programVerifyMs)),
+                    ("concretize_ms", CoreLib.SiProfile.Number(concretizeMs)),
+                    ("refinement_ms", CoreLib.SiProfile.Number(refinementMs)));
                 refinementState.Pop();
 
                 // We've found a bug
@@ -582,12 +640,23 @@ namespace cba
         // Does field refinement. It optimizes the flow of CompilerPasses, factoring out the
         // common ones outside the refinement loop
         private static bool checkAndRefinePathFewPasses(PersistentCBAProgram counterexample,
-            RefinementState refinementState, out ErrorTrace cexTrace)
+            RefinementState refinementState, out ErrorTrace cexTrace, out long concretizeMs,
+            out long refinementMs)
         {
             BoogieVerify.setTimeOut(GlobalConfig.getTimeLeft());
 
+            concretizeMs = 0;
+            refinementMs = 0;
+
             // Check if counterexample is valid
-            var success = CBADriver.checkPath(counterexample, counterexample.allVars, out cexTrace);
+            bool success;
+            var concretizeTimer = CoreLib.SiProfile.IsEnabled ? Stopwatch.StartNew() : null;
+            using (CoreLib.SiProfile.EnterPhase("CONCRETIZE"))
+            {
+                success = CBADriver.checkPath(counterexample, counterexample.allVars, out cexTrace);
+            }
+            if (concretizeTimer != null)
+                concretizeMs = (long)Math.Round(concretizeTimer.Elapsed.TotalMilliseconds);
 
             if (!success)
             {
@@ -606,8 +675,15 @@ namespace cba
             ConfigManager.beginRefinement();
 
             // Compute the new set of tracked variables to rule out this counterexample
-            var refine = new GeneralRefinementScheme(new SequentialProgVerifier(), true, counterexample, refinementState);
-            refine.doRefinement();
+            GeneralRefinementScheme refine;
+            var refinementTimer = CoreLib.SiProfile.IsEnabled ? Stopwatch.StartNew() : null;
+            using (CoreLib.SiProfile.EnterPhase("REFINEMENT"))
+            {
+                refine = new GeneralRefinementScheme(new SequentialProgVerifier(), true, counterexample, refinementState);
+                refine.doRefinement();
+            }
+            if (refinementTimer != null)
+                refinementMs = (long)Math.Round(refinementTimer.Elapsed.TotalMilliseconds);
             if (refine.useZ3Search)
             {
                 Stats.pathVerificationQueries++;
