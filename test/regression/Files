@@ -42,3 +42,5 @@ irreducible\irred_nocall.bpl b
 dupmodifies\dup.bpl b
 dupmodifies\entrydup.bpl b
 dupmodifies\stubdup.bpl b
+extensionality-auto\mapeq.bpl c
+extensionality-off\mapeq.bpl b

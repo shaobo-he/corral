@@ -98,6 +98,7 @@ Run `corral` with no arguments for the same list.
 | `/recursionBound:n` | Recursion depth bound (default 1) |
 | `/trackAllVars` | Track all shared variables |
 | `/useArrayTheory` | Use *extensional* arrays — see the note below |
+| `/noArrayExtensionality` | Never use extensional arrays, even when the input compares maps — see the note below |
 | `/useProverEvaluate` | Use prover evaluate mode |
 | `/timeLimit:n` | Z3 timeout in seconds |
 | `/cex:n` | Maximum number of counterexamples (default 1) |
@@ -113,14 +114,25 @@ Run `corral` with no arguments for the same list.
 **`/useArrayTheory` means something different here than on `mini-corral`.**
 Boogie 3.5.7 no longer takes a `/useArrayTheory` switch — array theory is always
 on — so the port stopped forwarding one. What is left is the extensionality
-setting: the default (flag absent) still adds
-`/proverOpt:O:smt.array.extensional=false`, and passing `/useArrayTheory` now
-only suppresses that, leaving Z3's extensional arrays in place. The flag is
-still accepted and parsed; it just no longer switches array theory on.
+setting, which has three states:
+
+- **Default.** Extensionality is off (`/proverOpt:O:smt.array.extensional=false`)
+  unless the input compares two maps, or two datatype values that contain maps,
+  with `==` or `!=`. Proving such an equality from pointwise facts needs
+  extensionality, and Boogie's standard library states its facts that way.
+- **`/useArrayTheory`.** Extensionality is always on.
+- **`/noArrayExtensionality`.** Extensionality is always off. Use it for input
+  that compares maps only in assumptions — a prophecy encoding's
+  `assume cur == fin` on values that hold maps — and never needs a map equality
+  proved. There, extensionality only slows the prover, sometimes from seconds to
+  a timeout. Leaving it off cannot hide a bug: the prover admits more models, so
+  at worst Corral reports a bug the program does not have.
+
+The two flags conflict; passing both is a usage error.
 
 ## Regressions
 
-The tests live in `test/regression` (44 cases listed in `Files`; each line is a
+The tests live in `test/regression` (46 cases listed in `Files`; each line is a
 `.bpl` path plus the expected outcome, `b` for buggy or `c` for correct). Run
 them all with:
 

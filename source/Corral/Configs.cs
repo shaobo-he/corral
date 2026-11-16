@@ -21,6 +21,7 @@ namespace cba
             Console.WriteLine(" /recursionBound:int\t Set recursion depth bound");
             Console.WriteLine(" /trackAllVars      \t Track all shared variables.");
             Console.WriteLine(" /useArrayTheory    \t Force Z3 array extensionality on (auto-enabled when the input compares maps).");
+            Console.WriteLine(" /noArrayExtensionality\t Keep Z3 array extensionality off, even when the input compares maps.");
             Console.WriteLine(" /useProverEvaluate \t Use prover evaluate mode.");
             Console.WriteLine(" /timeLimit:n       \t Set Z3 timeout to n sec (default 500)");
             Console.WriteLine(" /cex:n             \t Max counterexamples");
@@ -189,7 +190,15 @@ namespace cba
             }
             else if (flag == "/useArrayTheory")
             {
+                if (arrayTheory == ArrayTheoryOptions.OFF)
+                    throw new UsageError("/useArrayTheory conflicts with /noArrayExtensionality");
                 arrayTheory = ArrayTheoryOptions.STRONG;
+            }
+            else if (flag == "/noArrayExtensionality")
+            {
+                if (arrayTheory == ArrayTheoryOptions.STRONG)
+                    throw new UsageError("/noArrayExtensionality conflicts with /useArrayTheory");
+                arrayTheory = ArrayTheoryOptions.OFF;
             }
             else if (flag == "/useProverEvaluate")
             {
@@ -234,5 +243,10 @@ namespace cba
 
     }
 
-    public enum ArrayTheoryOptions { NONE, WEAK, STRONG };
+    // How Z3's array extensionality is set:
+    //   WEAK   (default)                 off, unless the input compares maps (Driver.UsesMapEquality)
+    //   STRONG (/useArrayTheory)         on
+    //   OFF    (/noArrayExtensionality)  off, even when the input compares maps
+    // NONE is not used.
+    public enum ArrayTheoryOptions { NONE, WEAK, STRONG, OFF };
 }

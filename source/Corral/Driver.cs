@@ -111,7 +111,8 @@ namespace cba
             VariableSlicing.UseSimpleSlicing = false;
             InstrumentationConfig.raiseExceptionBeforeAllProcedures = false;
 
-            if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK)
+            if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK
+                || GlobalConfig.useArrayTheory == ArrayTheoryOptions.OFF)
             {
                 boogieOptions += " /proverOpt:" + arrayExtensionalityOff;
             }
@@ -433,6 +434,12 @@ namespace cba
             // back on for them. Inputs that never compare two maps -- which is all of SMACK's
             // output -- keep the option and are handed to the prover exactly as before.
             // Has to run after the typecheck above: the detector reads Expr.Type.
+            //
+            // /noArrayExtensionality (OFF) skips the detector. Some inputs compare maps only in
+            // assumptions -- a prophecy encoding's "assume cur == fin" on values holding maps --
+            // and never need an equality *proved*; for them extensionality only slows the
+            // prover, sometimes from seconds to timeouts. Leaving it off cannot hide a bug: it
+            // admits more models, so at worst it reports one the program does not have.
             if (GlobalConfig.useArrayTheory == ArrayTheoryOptions.WEAK && UsesMapEquality(init))
             {
                 BoogieUtil.BoogieOptions.ProverOptions.RemoveAll(
