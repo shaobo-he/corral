@@ -1,38 +1,169 @@
-name: Corral Release
+name: Release
+
+# Publishes prebuilt mini-corral binaries as a GitHub release.
+#
+# Pushing a tag named `mini-corral-*` builds a self-contained Corral for each
+# platform below (running it needs no .NET installation), runs the regression
+# suite against each packaged archive on its own platform, and attaches the
+# archives and a SHA256SUMS file to a *draft* release for that tag. Review the
+# draft, then publish it:
+#
+#   gh release edit <tag> --draft=false
+#
+# This replaces upstream Corral's release workflow, which pushed a NuGet tool
+# package. mini-corral is not published to NuGet.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['mini-corral-*']
+
+permissions:
+  contents: read
 
 env:
-  SOLUTION: source/Corral.sln
+  Z3_VERSION: 5.0.0
 
 jobs:
-  job0:
-    name: Corral Release
-    runs-on: ubuntu-22.04
+  build:
+    name: Build ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            # The Z3 5.0.0 Linux build needs glibc >= 2.39.
+            os: ubuntu-24.04
+            z3: x64-glibc-2.39
+          - rid: win-x64
+            os: windows-latest
+            z3: x64-win
+          - rid: osx-arm64
+            os: macos-latest
+            z3: arm64-osx-13.3
+    defaults:
+      run:
+        shell: bash
+    env:
+      ASSET: ${{ github.ref_name }}-${{ matrix.rid }}
     steps:
+      # Windows runners check files out with CRLF line endings, and check.pl
+      # then reads each expected result in test/regression/Files as "c\r"
+      # rather than "c", failing every test that expects no bug.
+      - name: Check out with LF line endings
+        run: git config --global core.autocrlf false
+
+      - name: Checkout Corral
+        uses: actions/checkout@v4
+
       - name: Setup dotnet
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+
+      # PackAsTool and GeneratePackageOnBuild exist for the NuGet tool package;
+      # turning them off keeps `publish` from also packing. The version is not
+      # stamped on purpose: tools that drive Corral match its banner,
+      # "Corral program verifier version 1.0.0.0", so the release is named by
+      # its tag instead.
+      - name: Publish a self-contained Corral
+        run: >
+          dotnet publish source/Corral/Corral.csproj
+          -c Release -r ${{ matrix.rid }} --self-contained true
+          -p:PackAsTool=false -p:GeneratePackageOnBuild=false
+          -o "dist/$ASSET"
+
+      - name: Package
+        run: |
+          cp LICENSE.txt "dist/$ASSET/"
+          cd dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a -tzip -bso0 "$ASSET.zip" "$ASSET"
+          else
+            tar -czf "$ASSET.tar.gz" "$ASSET"
+          fi
+
+      # Test the archive, not the publish directory, so the test sees exactly
+      # what ships, executable bits included. check.pl looks for the binary
+      # under source/Corral/bin/$CONFIGURATION.
+      - name: Test the packaged archive
+        env:
+          CONFIGURATION: Shipped
+          # Windows: keep Git Bash from rewriting `/flags:config` into a path.
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          z3="z3-$Z3_VERSION-${{ matrix.z3 }}"
+          curl -fsSL -o z3.zip "https://github.com/Z3Prover/z3/releases/download/z3-$Z3_VERSION/$z3.zip"
+          mkdir -p source/Corral/bin/Shipped
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z x -bso0 z3.zip
+            7z x -bso0 -osource/Corral/bin/Shipped "dist/$ASSET.zip"
+          else
+            unzip -q z3.zip
+            chmod +x "$z3/bin/z3"
+            tar -xzf "dist/$ASSET.tar.gz" -C source/Corral/bin/Shipped
+          fi
+          export PATH="$PWD/$z3/bin:$PATH"
+          cd test/regression
+          perl check.pl
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: dist/${{ env.ASSET }}.*
+          if-no-files-found: error
+
+  release:
+    name: Draft the release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
       - name: Checkout Corral
         uses: actions/checkout@v4
+
+      - name: Download the archives
+        uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
-      - name: Build Corral, package Corral
+          path: assets
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd assets && sha256sum -- * > SHA256SUMS
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Find version from tag info
-          VERSION="${GITHUB_REF##*/v}"
-          echo VERSION=$VERSION
-          # Change directory to Corral root folder
-          cd $GITHUB_WORKSPACE
-          # Restore dotnet tools
-          dotnet tool restore
-          # Build Corral
-          dotnet build -p:Version=$VERSION -c Release ${SOLUTION}
-          # Create packages
-          dotnet pack -p:Version=$VERSION --no-build -c Release ${SOLUTION}
-      - name: Deploy to nuget
-        run:
-          dotnet nuget push "source/Corral/bin/Release/Corral*.nupkg" -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json
+          boogie=$(sed -n 's/.*Include="Boogie.ExecutionEngine" Version="\([^"]*\)".*/\1/p' source/Directory.Build.props)
+          cat > notes.md <<'EOF'
+          Self-contained mini-corral binaries, built from @SHA@ against Boogie @BOOGIE@. They need no .NET installation: unpack the archive for your platform and run `corral`.
+
+          | Platform | Archive |
+          | --- | --- |
+          | Linux x64 | `@TAG@-linux-x64.tar.gz` |
+          | Windows x64 | `@TAG@-win-x64.zip` |
+          | macOS arm64 | `@TAG@-osx-arm64.tar.gz` |
+
+          Each archive passed the regression suite in `test/regression` on its own platform with Z3 @Z3@.
+
+          **Z3 is not included.** Put it on `PATH`, or pass `/bopt:proverOpt:PROVER_PATH=<path to z3>`.
+
+          **macOS:** the binaries are not notarized. If you download an archive with a browser, clear the quarantine attribute after unpacking: `xattr -dr com.apple.quarantine <directory>`.
+
+          **Known issue:** on Windows, `/cex:N` with N > 1 reports the first counterexample and then crashes with an `IOException` while rewriting `next.bpl`.
+
+          Verify a download with `sha256sum --check --ignore-missing SHA256SUMS`.
+          EOF
+          sed -i \
+            -e "s/@SHA@/$GITHUB_SHA/" \
+            -e "s/@BOOGIE@/$boogie/" \
+            -e "s/@TAG@/$GITHUB_REF_NAME/g" \
+            -e "s/@Z3@/$Z3_VERSION/" \
+            notes.md
+          gh release create "$GITHUB_REF_NAME" assets/* \
+            --draft --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md

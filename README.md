@@ -66,6 +66,20 @@ other things:
 
 ## Building and running
 
+### Prebuilt binaries
+
+[Releases](https://github.com/shaobo-he/corral/releases) carry self-contained
+binaries for Linux x64, Windows x64 and macOS arm64. They need no .NET
+installation: unpack the archive and run `corral`. Each archive is tested
+against the regression suite on its own platform before it is attached.
+
+To cut a release, push a tag named `mini-corral-*` (for example
+`mini-corral-boogie-stdlib-r1`). The [Release workflow](.github/workflows/release.yml)
+builds and tests the archives and attaches them to a draft release; publish it
+with `gh release edit <tag> --draft=false`.
+
+### Building from source
+
 Build with [.NET 8](https://dotnet.microsoft.com):
 
 ```console
