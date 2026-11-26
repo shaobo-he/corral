@@ -35,10 +35,27 @@ namespace cba
             //////
 
             VariableSlicePass cp1 = new VariableSlicePass(trackedVars);
+            StormInstrumentationPass cp2 = null;
+            var recordK = new HashSet<string>();
+
+            // A multi-threaded program is sequentialized for the context bound
+            if (!GlobalConfig.isSingleThreaded)
+            {
+                cp2 = new StormInstrumentationPass();
+            }
+
+            // Run the source transformations
             curr = cp1.run(curr);
+            if (cp2 != null) curr = cp2.run(curr);
+
+            // record k and tid
+            if (cp2 != null)
+            {
+                recordK.Add(cp2.varKName); recordK.Add(cp2.tidVarName);
+            }
 
             // Now verify
-            VerificationPass cp4 = new VerificationPass(true, new HashSet<string>());
+            VerificationPass cp4 = new VerificationPass(true, recordK);
             curr = cp4.run(curr);
 
             reachedBound = cp4.reachedBound;
@@ -59,7 +76,10 @@ namespace cba
                 // Concretization: map back the trace to the original program
                 var trace4 = cp4.trace;
 
-                var trace1 = cp1.mapBackTrace(trace4);
+                var trace2 = trace4;
+                if (cp2 != null) trace2 = cp2.mapBackTrace(trace4);
+
+                var trace1 = cp1.mapBackTrace(trace2);
 
                 cex = trace1;
 

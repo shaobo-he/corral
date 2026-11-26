@@ -202,17 +202,30 @@ namespace cba
 
             // Sequential instrumentation
             var seqInstr = new SequentialInstrumentation();
-            curr = seqInstr.run(curr);
-            initialTrackedVars.Add(seqInstr.assertsPassedName);
-
-            // Flag settings for sequential programs
-            VerificationPass.usePruning = false;
-
-            if (!config.useProverEvaluate)
+            if (GlobalConfig.isSingleThreaded)
             {
-                ConfigManager.progVerifyOptions.StratifiedInliningWithoutModels = true;
-                if (config.printData == 0)
-                    ConfigManager.pathVerifyOptions.StratifiedInliningWithoutModels = true;
+                curr = seqInstr.run(curr);
+                initialTrackedVars.Add(seqInstr.assertsPassedName);
+
+                // Flag settings for sequential programs
+                VerificationPass.usePruning = false;
+
+                if (!config.useProverEvaluate)
+                {
+                    ConfigManager.progVerifyOptions.StratifiedInliningWithoutModels = true;
+                    if (config.printData == 0)
+                        ConfigManager.pathVerifyOptions.StratifiedInliningWithoutModels = true;
+                }
+            }
+            else
+            {
+                // A multi-threaded program is instrumented for the context bound
+                // on every verification query instead (StormInstrumentationPass)
+                seqInstr = null;
+                if (config.NumCex > 1)
+                {
+                    throw new InvalidInput("Multiple counterexamples not yet supported for concurrent programs");
+                }
             }
 
             ProgTransformation.PersistentProgram.FreeParserMemory();
@@ -253,7 +266,7 @@ namespace cba
 
                 if (cexTrace != null)
                 {
-                    cexTrace = seqInstr.mapBackTrace(cexTrace);
+                    if (seqInstr != null) cexTrace = seqInstr.mapBackTrace(cexTrace);
                     cexTrace = prune.mapBackTrace(cexTrace);
                     cexTrace = rcalls.mapBackTrace(cexTrace);
 
@@ -378,6 +391,18 @@ namespace cba
                 Console.WriteLine("Single threaded program detected");
             }
 
+            if (!GlobalConfig.isSingleThreaded)
+            {
+                try
+                {
+                    WellFormedProg.check(init);
+                }
+                catch (InvalidInput e)
+                {
+                    throw new InvalidInput("Input Program not well-formed.\n" + e.Message);
+                }
+            }
+
             #endregion
 
             // force inline
@@ -409,6 +434,13 @@ namespace cba
 
             // Gather the set of initially tracked variables
             initialTrackedVars = getTrackedVars(init, config);
+
+            // thread-local variables are always tracked
+            foreach (var g in BoogieUtil.GetGlobalVariables(init))
+            {
+                if (QKeyValue.FindAttribute(g.Attributes, attr => attr.Key == LanguageSemantics.ThreadLocalAttr) != null)
+                    initialTrackedVars.Add(g.Name);
+            }
 
             // Gather source info
             if (GlobalConfig.genCTrace != null)
@@ -513,6 +545,9 @@ namespace cba
             cexTrace = null;
             var outcomeSuccess = true;
             var lightweight = true;
+            // For a multi-threaded program, a counterexample that is ruled out in
+            // its own context-switch order is then checked in any interleaving
+            var finerCheck = !GlobalConfig.isSingleThreaded;
             GeneralRefinementScheme.useHierarchicalSearch = true;
 
             // This loop exits only under two conditions: 
@@ -568,6 +603,40 @@ namespace cba
                     break;
                 }
 
+                while (finerCheck)
+                {
+                    // Expand the check to all possible interleavings contained in counterexample
+                    counterexample.mode = ConcurrencyMode.AnyInterleaving;
+
+                    PersistentCBAProgram counterexample2 = null;
+                    InsertionTrans tinfo2 = null;
+                    ErrorTrace cexTrace2 = null;
+
+                    success =
+                        CBADriver.checkPath(counterexample, refinementState.getVars(), true, out counterexample2, out tinfo2, out cexTrace2);
+
+                    // We have enough tracked vars
+                    if (success) break;
+                    Debug.Assert(counterexample2.mode == ConcurrencyMode.FixedContext);
+
+                    // We don't have enough tracked vars -- track more
+                    Log.Write("Program has a potential bug: ");
+
+                    refinementState.Push();
+                    refinementState.Add(new TraceMapping(tinfo2));
+                    success = checkAndRefinePathFewPasses(counterexample2, refinementState, out cexTrace2);
+                    refinementState.Pop();
+
+                    if (!success)
+                    {
+                        // Generate cex in the original program
+                        cexTrace2 = tinfo2.mapBackTrace(cexTrace2);
+                        cexTrace = tinfo.mapBackTrace(cexTrace2);
+                        outcomeSuccess = false;
+                        break;
+                    }
+                }
+
                 refinementState.Pop();
 
                 // We've found a bug
@@ -601,12 +670,23 @@ namespace cba
 
             cexTrace = null;
 
+            StormInstrumentationPass cp1 = null;
+            if (!GlobalConfig.isSingleThreaded)
+            {
+                cp1 = new StormInstrumentationPass();
+            }
+
+            var prog = counterexample;
+            if (cp1 != null) prog = cp1.run(prog);
+
             refinementState.Push();
+
+            if (cp1 != null) refinementState.Add(new InstrMapping(cp1));
 
             ConfigManager.beginRefinement();
 
             // Compute the new set of tracked variables to rule out this counterexample
-            var refine = new GeneralRefinementScheme(new SequentialProgVerifier(), true, counterexample, refinementState);
+            var refine = new GeneralRefinementScheme(new SequentialProgVerifier(), true, prog, refinementState);
             refine.doRefinement();
             if (refine.useZ3Search)
             {

@@ -1196,6 +1196,78 @@ namespace cba
         }
     }
 
+    // The Variable/Procedure mapping carried out by the sequentialization transformation
+    public class InstrMapping : VarProcMapping
+    {
+        // A map: [original program variable -> Set of instrumented program variables that it produced]
+        Dictionary<string, HashSet<string>> varMapping;
+        // The set of new variables added in the instrumented program
+        protected HashSet<string> newVarsAdded;
+        // The set of new procedures added in the instrumented program
+        HashSet<string> newProcsAdded;
+        // The set of all variables in the instrumented program
+        HashSet<string> allVars;
+        // The set of all procedures in the instrumented program
+        HashSet<string> allProcs;
+        // The set of (var,proc) pairs added in the instrumented program
+        VarSet pairsAdded;
+        // The set of (var,proc) pairs in the instrumented program
+        VarSet allPairs;
+        // Name of main (that has the Checker)
+        string mainProcName;
+
+        public InstrMapping(StormInstrumentationPass inst)
+        {
+            allVars = new HashSet<string>();
+            allProcs = new HashSet<string>();
+            newProcsAdded = new HashSet<string>();
+            newVarsAdded = new HashSet<string>();
+            varMapping = new Dictionary<string, HashSet<string>>();
+
+            var instrumentedProg = inst.output.getProgram();
+            var globals = BoogieUtil.GetGlobalVariables(instrumentedProg);
+            var procs = BoogieUtil.GetProcedures(instrumentedProg);
+            mainProcName = (inst.input as PersistentCBAProgram).mainProcName;
+
+            globals.Iter(g => allVars.Add(g.Name));
+            procs.Iter(p => allProcs.Add(p.Name));
+
+            newProcsAdded = inst.getInstrumentedProcedures();
+
+            var inpGlobals = BoogieUtil.GetGlobalVariables(inst.input.getProgram());
+            newVarsAdded = new HashSet<string>(allVars);
+
+            foreach (var g in inpGlobals)
+            {
+                var ig = inst.getInstrumentedVars(g.Name);
+                varMapping.Add(g.Name, ig);
+                newVarsAdded.ExceptWith(ig);
+            }
+
+            allPairs = VarSet.GetAllVars(instrumentedProg);
+            var v1 = new VarSet(newVarsAdded, allProcs);
+            var v2 = new VarSet(allVars, newProcsAdded);
+            pairsAdded = v1.Union(v2).Intersection(allPairs);
+        }
+
+        // Map (x,p) to { (x__1, p), (x__2, p), ..., (x_K, p) }
+        public override VarSet map(Duple<string, string> v)
+        {
+            Debug.Assert(varMapping.ContainsKey(v.fst));
+            var v1 = new VarSet(varMapping[v.fst], v.snd);
+            // include main because it has the checker instrumentation
+            var v2 = new VarSet(varMapping[v.fst], mainProcName);
+            return v1.Union(v2);
+        }
+
+        // Returns: ((NewVars x AllProcs) U (AllVars x NewProcs))
+        //          Intersect (AllVarProc that occur in the program)
+        public override VarSet defaultSet()
+        {
+            return pairsAdded;
+        }
+    }
+
     // The Variable/Procedure mapping carried out when a program is restricted to a trace.
     // Procedures get renamed to possibly multiple (0 or many) procedures.
     public class TraceMapping : VarProcMapping
