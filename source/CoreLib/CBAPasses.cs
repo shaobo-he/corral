@@ -9,6 +9,303 @@ using Microsoft.Boogie.GraphUtil;
 
 namespace cba
 {
+    // Main storm instrumentation pass.
+    // TODO: Split into multiple passes
+    public class StormInstrumentationPass : CompilerPass
+    {
+        ProgramInfo pinfo;
+        InstrumentationPolicy policy;
+        public VariableManager vmgr { get; private set; }
+        Instrumenter inst;
+
+        // This pass does two transformations. We record both.
+        InsertionTrans tinfo_instrument, tinfo_async;
+
+        // A map of blocks to the value of k that they imply: if a block b
+        // in procedure p has assume(k == i) command then (p::b,i) is inserted into the map
+        Dictionary<string, int> blockExecutionContextMap;
+
+        public string varKName
+        {
+            get
+            {
+                return vmgr.vark.Name;
+            }
+        }
+
+        public string tidVarName
+        {
+            get
+            {
+                return vmgr.tidVar.Name;
+            }
+        }
+
+        public StormInstrumentationPass()
+        {
+            passName = "Storm instrumentation";
+            pinfo = null;
+            policy = null;
+            vmgr = null;
+            inst = null;
+            tinfo_instrument = new InsertionTrans();
+            tinfo_async = new InsertionTrans();
+            blockExecutionContextMap = new Dictionary<string, int>();
+        }
+
+        public override CBAProgram runCBAPass(CBAProgram p)
+        {
+            if (p.mode == ConcurrencyMode.FixedContext)
+            {
+                InstrumentationConfig.addRaiseException = false;
+            }
+
+            // Step1: Gather program information
+            pinfo = new ProgramInfo(p.mainProcName, p, LanguageSemantics.assertNotReachableName());
+
+            TidArithmetic.reset();
+            if (pinfo.threadIdType.IsBv)
+            {
+                TidArithmetic.useIntArithmetic = false;
+                p.AddTopLevelDeclaration(TidArithmetic.getBvAdd());
+                p.AddTopLevelDeclaration(TidArithmetic.getBvGt());
+            }
+            else
+            {
+                TidArithmetic.useIntArithmetic = true;
+            }
+
+            // Step2: Set up a variable manager
+            vmgr = new VariableManager(pinfo);
+
+            // Step3: Set up the instrumentation policy
+
+            // The globals not to instrument are:
+            //   -- ones not modified by any procedure
+            //   -- ones not shared
+            //   -- ones to treat as thread-local
+            HashSet<string> globalsToInstrument = new HashSet<string>();
+
+            foreach (var g in pinfo.declaredGlobals)
+            {
+                string name = g.Key;
+                if (!pinfo.modifiedGlobals.ContainsKey(name))
+                    continue;
+                if (!LanguageSemantics.isShared(name))
+                    continue;
+                if (pinfo.threadLocalGlobals.ContainsKey(name))
+                    continue;
+                globalsToInstrument.Add(name);
+            }
+
+            var rprocs = findRecursiveProcs(p);
+            //foreach (var be in rprocs) Console.WriteLine("{0} -> {1}", be.Item1, be.Item2);
+
+            policy =
+                new InstrumentationPolicy(p.contextBound, globalsToInstrument, pinfo.procsWithImplementation, pinfo.asyncProcs, rprocs, p.mode);
+
+            //policy.print(Log.getWriter(Log.Debug));
+
+            // Step4: Split program declarations based on the instrumentation policy
+
+            // skipping this step (not needed for basic CBA reduction)
+
+            // Step5: Carry out the K-split instrumentation
+            inst = new Instrumenter(policy, vmgr, pinfo, tinfo_instrument);
+            List<Declaration> newDecls = inst.instrument(p.TopLevelDeclarations.ToList());
+            foreach (var trp in inst.blocksWithFixedK)
+            {
+                blockExecutionContextMap.Add(trp.fst + "::" + trp.snd, trp.trd);
+            }
+
+            // Step6: Instrument main with initialization and the Checker
+            Implementation mainProcImpl = BoogieUtil.findProcedureImpl(newDecls, p.mainProcName);
+            inst.instrumentGivenMainImpl(mainProcImpl);
+
+            // Step7: Instrument Async calls
+            bool instrumentedAsync = false;
+            InstrumentAsyncCalls ainst = new InstrumentAsyncCalls(vmgr, pinfo, tinfo_async);
+            foreach (var decl in newDecls)
+            {
+                if (decl is Implementation)
+                {
+                    ainst.VisitImplementation(decl as Implementation);
+                    instrumentedAsync = instrumentedAsync || ainst.hasAsync;
+                }
+            }
+
+            if (!instrumentedAsync)
+            {
+                Log.WriteLine(Log.Debug, "Warning: Did not find any async call");
+            }
+
+            // Step8: Set entrypoint
+            mainProcImpl.AddAttribute("entrypoint");
+
+            // Step9: Add new variable declarations
+            newDecls.AddRange(vmgr.getNewDeclarations(policy.executionContextBound));
+            newDecls.AddRange(BoogieAstFactory.newDecls);
+            BoogieAstFactory.newDecls.Clear();
+
+            // Thats it.
+
+            Program ret = new Program();
+            ret.TopLevelDeclarations = newDecls;
+
+            // Resolve the program (Do not typecheck because that does inlining).
+            //BoogieUtil.PrintProgram(ret, "instrumented.bpl");
+            //ret = BoogieUtil.ReadAndOnlyResolve("instrumented.bpl");
+            if (p.mode == ConcurrencyMode.FixedContext)
+            {
+                InstrumentationConfig.addRaiseException = true;
+            }
+
+            p = new CBAProgram(ret, p.mainProcName, p.contextBound);
+
+            return p;
+        }
+
+        // Returns all backedges of the call graph (i.e., a cutset in terms of edges)
+        private HashSet<Tuple<string, string>> findRecursiveProcs(CBAProgram p)
+        {
+            var ret = new HashSet<Tuple<string, string>>();
+
+            Graph<string> callGraph = new Graph<string>();
+            callGraph.AddSource(p.mainProcName);
+            foreach (var decl in p.TopLevelDeclarations)
+            {
+                var impl = decl as Implementation;
+                if (impl == null) continue;
+                foreach (var blk in impl.Blocks)
+                {
+                    foreach (Cmd cmd in blk.Cmds)
+                    {
+                        var ccmd = cmd as CallCmd;
+                        if (ccmd == null) continue;
+                        callGraph.AddEdge(impl.Name, ccmd.callee);
+                    }
+                }
+            }
+
+            // Do DFS to find a cutset
+
+            // 0: white, 1: gray, 2: black
+            var color = new Dictionary<string, int>();
+            foreach (var n in callGraph.Nodes) color.Add(n, 0);
+
+            dfs(callGraph, p.mainProcName, color, ret);
+            return ret;
+        }
+
+        // From [CLR, pg. 483]
+        private void dfs(Microsoft.Boogie.GraphUtil.Graph<string> callGraph, string node, Dictionary<string, int> color, HashSet<Tuple<string, string>> ret)
+        {
+            Debug.Assert(color[node] == 0);
+
+            // gray
+            color[node] = 1;
+
+            foreach (var s in callGraph.Successors(node))
+            {
+                // backedge
+                if (color[s] == 1)
+                    ret.Add(Tuple.Create(node, s));
+
+                if (color[s] == 0)
+                    dfs(callGraph, s, color, ret);
+            }
+
+            // black
+            color[node] = 2;
+        }
+
+        // Return the set of variables that the instrumentation pass added because of the
+        // given global variable g. (Its the K copies if g is modified, or it's g itself)
+        public HashSet<string> getInstrumentedVars(string g)
+        {
+            return inst.getInstrumentedVars(g);
+        }
+
+        public HashSet<string> getInstrumentedProcedures()
+        {
+            var t = new HashSet<string>();
+            t.Add(inst.getContextSwitchProcedure().Name);
+            return t;
+        }
+
+        public override ErrorTrace mapBackTrace(ErrorTrace trace)
+        {
+            trace = trace.Copy();
+
+            // delete tid info
+            deleteTidInfo(trace);
+
+            // Map back across async call instrumentation
+            trace = tinfo_async.mapBackTrace(trace);
+
+            // insert context switch info according to blockExecutionContextMap
+            insertContextSwitchInfo(trace);
+
+            // Propagate the context switch info to other places -- this is
+            // necessary to get the context info to the Cmds that actually
+            // access global variables
+            ErrorTrace.fillInContextSwitchInfo(trace);
+
+            return tinfo_instrument.mapBackTrace(trace);
+        }
+
+        // insert context switch info according to blockExecutionContextMap
+        private void insertContextSwitchInfo(ErrorTrace trace)
+        {
+            if (trace.Blocks.Count == 0) return;
+
+            foreach (var blk in trace.Blocks)
+            {
+                if (blockExecutionContextMap.ContainsKey(trace.procName + "::" + blk.blockName))
+                {
+                    var k = blockExecutionContextMap[trace.procName + "::" + blk.blockName];
+                    if (blk.Cmds.Count != 0)
+                    {
+                        blk.Cmds[0].info.executionContext = k;
+                    }
+                }
+
+                foreach (var c in blk.Cmds)
+                {
+                    if (c.CalleeTrace != null)
+                    {
+                        insertContextSwitchInfo(c.CalleeTrace);
+                    }
+                }
+            }
+
+            var exitblk = trace.Blocks.Last();
+            if (inst.blocksThatRaiseException.Contains(exitblk.blockName))
+            {
+                trace.setRaiseException();
+            }
+        }
+
+        // delete tid info
+        private void deleteTidInfo(ErrorTrace trace)
+        {
+            if (trace.Blocks.Count == 0) return;
+
+            foreach (var blk in trace.Blocks)
+            {
+                if (blk.info != null)
+                    blk.info.tid = -1;
+
+                foreach (var c in blk.Cmds)
+                {
+                    if (c.info != null) c.info.tid = -1;
+                    if (c.CalleeTrace != null) deleteTidInfo(c.CalleeTrace);
+                }
+            }
+        }
+
+    }
+
     // This is used for pre-processing of the input program. We rewrite calls
     // so that they only operate on local variables.
     public class RewriteCallCmdsPass : CompilerPass

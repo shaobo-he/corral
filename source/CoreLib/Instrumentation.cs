@@ -100,6 +100,1386 @@ namespace cba
 
     }
 
+    // This class instruments globals, procedures and implementations
+    public class Instrumenter
+    {
+        // The execution context bound for instrumentation
+        private int K;
+
+        // A VariableManager is used to create variable copies
+        private VariableManager mgr;
+
+        // The instrumentation policy tells us which globals and procedures to
+        // instrument
+        private InstrumentationPolicy policy;
+
+        // Some useful program information
+        private ProgramInfo pinfo;
+
+        // A command renamer. Given a command cmd, it is used to produce
+        // K copies of the command, where the i^th copy manipulates the
+        // i^th copy of global variables
+        private CmdRenamer cmd_renamer;
+
+        // Used for getting unique labels
+        private int label_cnt;
+
+        // To keep track of the code transformations made
+        InsertionTrans tinfo;
+
+        // Keep track of blocks that record the value of k. If a block has "assume k == i" then
+        // remember this fact here.
+        public List<Triple<string, string, int>> blocksWithFixedK { get; private set; }
+
+        // Blocks that correspond to raising raiseException
+        public HashSet<string> blocksThatRaiseException { get; private set; }
+
+        public Instrumenter(InstrumentationPolicy pol, VariableManager m, ProgramInfo pinf, InsertionTrans t)
+        {
+            Debug.Assert(pol.executionContextBound >= 1);
+            policy = pol;
+            pinfo = pinf;
+            K = policy.executionContextBound;
+            mgr = m;
+            tinfo = t;
+            blocksWithFixedK = new List<Triple<string, string, int>>();
+            blocksThatRaiseException = new HashSet<string>();
+
+            cmd_renamer = new CmdRenamer(mgr, policy);
+
+            label_cnt = 0;
+        }
+
+        // Input: A list of declarations to instrument
+        // Output: The intrumented list of declarations. It instruments
+        // globals, procedures and implementations. The instrumentation
+        // may be performed in-place, i.e., the input list of declarations
+        // may change.
+        public List<Declaration> instrument(List<Declaration> decls)
+        {
+            var ret = new List<Declaration>();
+
+            if (InstrumentationConfig.UseOldInstrumentation)
+            {
+                VariableManager.ContextSwitchRaisesException = true;
+            }
+            else
+            {
+                VariableManager.ContextSwitchRaisesException = false;
+            }
+
+            // Annotation widen points
+            // TODO: Locate loops in a better way; or just compile them away into procedures
+            var tmpProg = new Program();
+            tmpProg.TopLevelDeclarations = decls;
+            WidenPoints.Compute(tmpProg);
+
+            foreach (Declaration d in decls)
+            {
+                if (!policy.instrument(d))
+                {
+                    ret.Add(d);
+                    continue;
+                }
+
+                if (d is GlobalVariable)
+                {
+                    var ls = instrument((GlobalVariable)d);
+                    ls.Iterate(x => ret.Add((Declaration)x));
+                }
+                else if (d is Procedure)
+                {
+                    ret.Add((Declaration)instrument((Procedure)d));
+                }
+                else if (d is Implementation)
+                {
+                    ret.Add((Declaration)instrument((Implementation)d));
+                }
+                else
+                {
+                    throw new InternalError("Cannot instrument a declaration other than" +
+                                            " global, procedure or implementation");
+                }
+            }
+
+            return ret;
+        }
+
+        public Procedure getContextSwitchProcedure()
+        {
+            return mgr.getContextSwitchProcedure(this.K);
+        }
+
+        // Return the set of variables that the instrumentation pass added because of the
+        // given global variable g. (Its the K copies if g is modified, or its g itself)
+        public HashSet<string> getInstrumentedVars(string g)
+        {
+            var ret = new HashSet<string>();
+
+            if (!policy.instrumentGlobalVar(g))
+            {
+                ret.Add(g);
+                return ret;
+            }
+
+            return mgr.getAllVarCopies(g);
+        }
+
+        // Input: A global variable to instrument
+        // Output: the list of instrumented global variables: essentially,
+        // copy the variable K times, and (K-1) more copies for the INIT
+        // versions of the variable
+        public List<GlobalVariable> instrument(GlobalVariable g)
+        {
+            Debug.Assert(policy.instrument(g));
+
+            List<GlobalVariable> dups = mgr.duplicateGlobalVar(g, DuplicationPolicy.AllCopies(K));
+            dups.AddRange(mgr.duplicateGlobalVar(g, DuplicationPolicy.InitCopies(K)));
+
+            return dups;
+
+        }
+
+        // Input: A procedure declaration to instrument.
+        // Output: The instrumented procedure declaration.
+        //
+        // Changes the modified declaration of a procedure: replace each global variable
+        // with all its K copies.
+        public Procedure instrument(Procedure proc)
+        {
+            Debug.Assert(policy.instrument(proc));
+
+            return instrument(proc, DuplicationPolicy.AllCopies(K));
+        }
+
+        // Applies the duplication policy to the modifies list
+        private Procedure instrument(Procedure proc, DuplicationPolicy dup)
+        {
+            // Check ensures annotations
+            foreach (Ensures en in proc.Ensures)
+            {
+                if (policy.hasGlobalVarsToInstrument(en.Condition))
+                {
+                    en.Condition.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions));
+                    throw new InternalError("Cannot yet instrument ensures annotations that have global variables");
+                }
+                // convert expr to: !assertsPassed || expr
+                en.Condition = Expr.Or(Expr.Not(Expr.Ident(mgr.errorVar)), en.Condition);
+            }
+
+            // Check requires annotations
+            foreach (Requires re in proc.Requires)
+            {
+                if (policy.hasGlobalVarsToInstrument(re.Condition))
+                {
+                    re.Condition.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions));
+                    throw new InternalError("Cannot yet instrument requires annotations that have global variables");
+                }
+            }
+
+            // Change the "modifies" list: replace each "to-instrument" global variable
+            // with all its K copies
+            List<IdentifierExpr> mods = new List<IdentifierExpr>();
+            var copies = new Dictionary<string, List<GlobalVariable>>();
+
+            foreach (IdentifierExpr ie in proc.Modifies)
+            {
+                GlobalVariable gbl = ie.Decl as GlobalVariable;
+
+                if (gbl == null)
+                {
+                    mods.Add(ie);
+                    continue;
+                }
+
+                if (!policy.instrument(gbl))
+                {
+                    mods.Add(ie);
+                    continue;
+                }
+
+                var newg = mgr.duplicateGlobalVar(gbl, dup);
+                newg.Iterate(x => mods.Add(new IdentifierExpr(gbl.tok, x)));
+                copies.Add(gbl.Name, newg);
+            }
+
+            if (policy.procHasImpl(proc.Name))
+            {
+                mods.Add(new IdentifierExpr(mgr.vark.tok, mgr.vark));
+                mods.Add(new IdentifierExpr(mgr.raiseException.tok, mgr.raiseException));
+                mods.Add(new IdentifierExpr(mgr.errorVar.tok, mgr.errorVar));
+                mods.Add(new IdentifierExpr(mgr.inAtomicBlock.tok, mgr.inAtomicBlock));
+                mods.Add(new IdentifierExpr(mgr.tidVar.tok, mgr.tidVar));
+                mods.Add(new IdentifierExpr(mgr.tidCountVar.tok, mgr.tidCountVar));
+
+                // Add some default invariants (to help lazy inlining)
+                // free ensures k < K
+                // free ensures old(k) <= k
+                // free ensures assertsPassed ==> old(assertsPassed)
+                // free ensures old(tidCount) <= tidCount
+                // free ensures old(tid) == tid
+
+                if (InstrumentationConfig.addInvariants != 0)
+                {
+                    proc.Ensures.Add(new Ensures(true, Expr.Lt(Expr.Ident(mgr.vark), Expr.Literal(K))));
+                    proc.Ensures.Add(new Ensures(true, Expr.Le(new OldExpr(Token.NoToken, Expr.Ident(mgr.vark)), Expr.Ident(mgr.vark))));
+                    proc.Ensures.Add(new Ensures(true, Expr.Eq(new OldExpr(Token.NoToken, Expr.Ident(mgr.tidVar)), Expr.Ident(mgr.tidVar))));
+
+                    if (!pinfo.procContainsAssert(proc.Name))
+                    {
+                        proc.Ensures.Add(new Ensures(true, Expr.Eq(Expr.Ident(mgr.errorVar), new OldExpr(Token.NoToken, Expr.Ident(mgr.errorVar)))));
+                    }
+                    else
+                    {
+                        proc.Ensures.Add(new Ensures(true, Expr.Imp(Expr.Ident(mgr.errorVar), new OldExpr(Token.NoToken, Expr.Ident(mgr.errorVar)))));
+                    }
+
+                    if (InstrumentationConfig.addInvariants == 2)
+                    {
+                        for (int i = 1; i < K; i++)
+                        {
+                            Expr expr = Expr.True;
+                            for (int j = 0; j < i; j++)
+                            {
+                                foreach (var tp in copies)
+                                {
+                                    expr = Expr.And(expr, Expr.Eq(Expr.Ident(tp.Value[j]), new OldExpr(Token.NoToken, Expr.Ident(tp.Value[j]))));
+                                }
+                            }
+                            expr = Expr.Imp(Expr.Eq(new OldExpr(Token.NoToken, Expr.Ident(mgr.vark)), Expr.Literal(i)), expr);
+                            proc.Ensures.Add(new Ensures(true, expr));
+                        }
+                    }
+
+                    if (!pinfo.procSpawnsThread(proc.Name) && pinfo.threadIdType.IsInt)
+                    {
+                        proc.Ensures.Add(new Ensures(true, Expr.Eq(new OldExpr(Token.NoToken, Expr.Ident(mgr.tidCountVar)), Expr.Ident(mgr.tidCountVar))));
+                        if (InstrumentationConfig.addInvariants == 2)
+                        {
+                            for (int i = 0; i < K - 1; i++)
+                            {
+                                Expr expr = Expr.True;
+                                for (int j = i + 1; j < K; j++)
+                                {
+                                    foreach (var tp in copies)
+                                    {
+                                        expr = Expr.And(expr, Expr.Eq(Expr.Ident(tp.Value[j]), new OldExpr(Token.NoToken, Expr.Ident(tp.Value[j]))));
+                                    }
+                                }
+                                expr = Expr.Imp(Expr.Eq(Expr.Ident(mgr.vark), Expr.Literal(i)), expr);
+                                proc.Ensures.Add(new Ensures(true, expr));
+                            }
+                        }
+                    }
+                    else if (pinfo.threadIdType.IsInt)
+                    {
+                        proc.Ensures.Add(new Ensures(true, Expr.Le(new OldExpr(Token.NoToken, Expr.Ident(mgr.tidCountVar)), Expr.Ident(mgr.tidCountVar))));
+                    }
+
+                }
+            }
+
+            proc.Modifies = mods;
+
+            return proc;
+        }
+
+        // return true if expr is "true"
+        private bool exprIsTrue(Expr expr)
+        {
+            if (expr is LiteralExpr && (expr as LiteralExpr).IsTrue) return true;
+
+            // check if "! false"
+            var nary = expr as NAryExpr;
+            if (nary == null) return false;
+            var uop = nary.Fun as UnaryOperator;
+            if (uop == null) return false;
+            if (uop.Op != UnaryOperator.Opcode.Not) return false;
+
+            var nexpr = nary.Args[0];
+            if (nexpr is LiteralExpr && (nexpr as LiteralExpr).IsFalse) return true;
+            return false;
+        }
+
+        private void annotateBlockingAssumes(Implementation impl)
+        {
+            // Annotate all assumes (that are not assume true) by default
+            foreach (var blk in impl.Blocks)
+            {
+                foreach (Cmd cmd in blk.Cmds)
+                {
+                    var acmd = cmd as AssumeCmd;
+                    if (acmd == null) continue;
+                    if (exprIsTrue(acmd.Expr)) continue;
+
+                    var p = new List<object>();
+                    acmd.Attributes = new QKeyValue(Token.NoToken, "do_re", p, acmd.Attributes);
+                }
+            }
+
+            // Build a predecessor map
+            var preds = new Dictionary<string, HashSet<string>>();
+            foreach (var blk in impl.Blocks)
+            {
+                var src = blk.Label;
+                var gc = blk.TransferCmd as GotoCmd;
+                if (gc == null) continue;
+                foreach (string tgt in gc.LabelNames)
+                {
+                    if (!preds.ContainsKey(tgt)) preds.Add(tgt, new HashSet<string>());
+                    preds[tgt].Add(src);
+                }
+            }
+
+            // Find the pattern for "deterministic" branching
+            //  goto lab1, lab2;
+            // lab1: assume e;
+            // lab2: assume not e;
+            // and there are no other edges to lab1 and lab2
+
+            var nameBlockMap = BoogieUtil.labelBlockMapping(impl);
+
+            foreach (var blk in impl.Blocks)
+            {
+                if (blk.Cmds.Count == 0) continue;
+
+                var acmd = blk.Cmds[0] as AssumeCmd;
+                if (acmd == null) continue;
+
+                if (!(QKeyValue.FindAttribute(acmd.Attributes, attr => attr.Key == "do_re") != null)) continue;
+
+                if (!preds.ContainsKey(blk.Label)) continue;
+                if (preds[blk.Label].Count != 1) continue;
+
+                var unique_pred = nameBlockMap[preds[blk.Label].First()];
+                var gc = unique_pred.TransferCmd as GotoCmd;
+                Debug.Assert(gc != null);
+
+                if (gc.LabelNames.Count != 2) continue;
+
+                var lab2 = gc.LabelNames[0];
+                if (lab2 == blk.Label) lab2 = gc.LabelNames[1];
+                Debug.Assert(lab2 != blk.Label);
+
+                var block2 = nameBlockMap[lab2];
+                if (block2.Cmds.Count == 0) continue;
+                var acmd2 = block2.Cmds[0] as AssumeCmd;
+                if (acmd2 == null) continue;
+
+                if (!checkNegation(acmd.Expr, acmd2.Expr)) continue;
+
+                // Remove attribute
+                Debug.Assert((QKeyValue.FindAttribute(acmd2.Attributes, attr => attr.Key == "do_re") != null));
+                Debug.Assert(acmd2.Attributes.Key == "do_re");
+                Debug.Assert(acmd.Attributes.Key == "do_re");
+
+                acmd2.Attributes = acmd2.Attributes.Next;
+                acmd.Attributes = acmd.Attributes.Next;
+            }
+
+            // Remove annotations on assumes that are the first in a widening block
+            foreach (var blk in impl.Blocks)
+            {
+                if (!blk.WidenBlock) continue;
+                if (blk.Cmds.Count == 0) continue;
+                var acmd = blk.Cmds[0] as AssumeCmd;
+                if (acmd == null || !(QKeyValue.FindAttribute(acmd.Attributes, attr => attr.Key == "do_re") != null)) continue;
+                Debug.Assert(acmd.Attributes.Key == "do_re");
+                acmd.Attributes = acmd.Attributes.Next;
+            }
+        }
+
+        // Check if the expressions are negations of each other
+        private bool checkNegation(Expr expr1, Expr expr2)
+        {
+            var e1 = expr1 as NAryExpr;
+            var e2 = expr2 as NAryExpr;
+            if (e1 == null || e2 == null) return false;
+
+            var uop1 = e1.Fun as UnaryOperator;
+            if (uop1 != null && uop1.Op == UnaryOperator.Opcode.Not)
+            {
+                if (checkIfSame(e1.Args[0], e2)) return true;
+            }
+
+            var uop2 = e2.Fun as UnaryOperator;
+            if (uop2 != null && uop2.Op == UnaryOperator.Opcode.Not)
+            {
+                if (checkIfSame(e2.Args[0], e1)) return true;
+            }
+
+            var bop1 = e1.Fun as BinaryOperator;
+            var bop2 = e2.Fun as BinaryOperator;
+            if (bop1 == null || bop2 == null) return false;
+            if (!checkIfSame(e1.Args[0], e2.Args[0]) || !checkIfSame(e1.Args[1], e2.Args[1])) return false;
+
+            if (checkIfNegatedOp(bop1.Op, bop2.Op)) return true;
+            if (checkIfNegatedOp(bop2.Op, bop1.Op)) return true;
+            return false;
+        }
+
+        // Check if the expressions are same
+        private bool checkIfSame(Expr expr1, Expr expr2)
+        {
+            return (expr1.ToString() == expr2.ToString());
+        }
+
+        // Check if the op codes are negated
+        private bool checkIfNegatedOp(BinaryOperator.Opcode op1, BinaryOperator.Opcode op2)
+        {
+            if (op1 == BinaryOperator.Opcode.Eq && op2 == BinaryOperator.Opcode.Neq) return true;
+            if (op1 == BinaryOperator.Opcode.Le && op2 == BinaryOperator.Opcode.Gt) return true;
+            if (op1 == BinaryOperator.Opcode.Ge && op2 == BinaryOperator.Opcode.Lt) return true;
+            return false;
+        }
+
+        public Implementation instrument(Implementation impl)
+        {
+            Debug.Assert(policy.instrument(impl));
+
+            List<Block> instrumented = new List<Block>();
+
+            // Fixed context value, if needed
+            int fixedContext = 0;
+
+            // annotate blocking assumes
+            annotateBlockingAssumes(impl);
+
+            // These two represent the current Block being constructed
+            List<Cmd> curr;
+            string curr_label;
+
+            foreach (Block block in impl.Blocks)
+            {
+                curr = new List<Cmd>();
+                curr_label = block.Label;
+
+                // This block will result in a block with the same name
+                // in the target program (and maybe also produce more blocks)
+                tinfo.addTrans(impl.Name, block.Label, block.Label);
+
+                // The instruction in the current block that we're looking at
+                int incnt = -1;
+
+                // If this is a widening block, add raiseException
+                if (block.WidenBlock && !InstrumentationConfig.cooperativeYield)
+                {
+                    curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
+                    curr = new List<Cmd>();
+                }
+
+                foreach (Cmd cmd in block.Cmds)
+                {
+                    incnt++;
+
+                    // If this is a fixed context instruction, then record the value
+                    if (policy.isFixedContextProc(cmd, ref fixedContext))
+                    {
+                        curr.Add(new AssumeCmd(Token.NoToken, Expr.True));
+                        addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+                        continue;
+                    }
+
+                    // If this is a raiseException instruction, then raise it
+                    if (policy.isFixedRaiseExceptionProc(cmd))
+                    {
+                        curr.Add(BoogieAstFactory.MkVarEqConst(mgr.raiseException, true));
+                        addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+                        continue;
+                    }
+
+                    // Replace call atomic_begin() with contextswitch(); raiseException; inAtomicBlock := true;
+                    if (policy.isAtomicBegin(cmd))
+                    {
+                        if (!InstrumentationConfig.cooperativeYield)
+                        {
+                            curr.Add(ContextSwitchCmd());
+                            curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
+                            curr = new List<Cmd>();
+                        }
+
+                        curr.Add(BoogieAstFactory.MkVarEqConst(mgr.inAtomicBlock, true));
+                        addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+
+                        continue;
+                    }
+
+                    // Replace call atomic_end() with inAtomicBlock := false
+                    if (policy.isAtomicEnd(cmd))
+                    {
+                        curr.Add(BoogieAstFactory.MkVarEqConst(mgr.inAtomicBlock, false));
+                        addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+
+                        continue;
+                    }
+
+                    // Replace call corral_yield() with contextswitch()
+                    if (policy.isYield(cmd))
+                    {
+                        //curr.Add(new AssumeCmd(Token.NoToken, Expr.Eq(Expr.Ident(mgr.inAtomicBlock), Expr.False)));
+                        curr.Add(ContextSwitchCmd());
+                        addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+
+                        curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
+                        curr = new List<Cmd>();
+
+                        continue;
+                    }
+
+                    // Replace call assert_dummy() with assertsPassed := false; raiseException := !inAtomicBlock;
+                    if (policy.isAssertCmd(cmd))
+                    {
+                        // raise exception before the assert
+                        curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
+                        curr = new List<Cmd>();
+
+                        curr.Add(BoogieAstFactory.MkVarEqConst(mgr.errorVar, false));
+                        addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+
+                        curr.Add(BoogieAstFactory.MkVarEqExpr(mgr.raiseException, Expr.Not(Expr.Ident(mgr.inAtomicBlock))));
+                        curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label);
+                        curr = new List<Cmd>();
+
+                        continue;
+                    }
+
+                    // Replace "y := getThreadID() with y := tid
+                    if (policy.isGetThreadID(cmd))
+                    {
+                        CallCmd ccmd = cmd as CallCmd;
+                        if (ccmd.Outs.Count == 0)
+                        {
+                            // return value not needed; ignore this command
+                            continue;
+                        }
+                        if (ccmd.Outs.Count != 1)
+                        {
+                            throw new InvalidInput("getThreadID returns multiple values");
+                        }
+                        if (ccmd.Outs[0] == null)
+                        {
+                            // return value not needed
+                            curr.Add(new AssumeCmd(Token.NoToken, Expr.True));
+                        }
+                        else
+                        {
+                            curr.Add(BoogieAstFactory.MkVarEqVar(ccmd.Outs[0].Decl, mgr.tidVar));
+                        }
+                        addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+                        continue;
+                    }
+
+                    if (policy.hasOldGlobalVarsToInstrument(cmd))
+                    {
+                        cmd.Emit(new TokenTextWriter(Console.Out, BoogieUtil.BoogieOptions), 0);
+                        throw new InternalError("Cannot yet handle \"old\" variables");
+                    }
+
+                    // raise exception before blocking assumes
+                    var assumecmd = cmd as AssumeCmd;
+                    if (assumecmd != null && (QKeyValue.FindAttribute(assumecmd.Attributes, attr => attr.Key == "do_re") != null) && !InstrumentationConfig.cooperativeYield)
+                    {
+                        curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
+                        curr = new List<Cmd>();
+                    }
+
+                    // if cmd does not refer to a "to-instrument" global variable, then don't
+                    // bother duplicating it. Furthermore, insert context switch only if its a
+                    // procedure call.
+                    bool isCall = false;
+                    bool isAsyncCall = false;
+                    // If cmd is a procedure call, is it a call to a procedure with
+                    // an implementation?
+                    bool hasBody = true;
+                    if (cmd is CallCmd)
+                    {
+                        isCall = true;
+                        isAsyncCall = (cmd as CallCmd).IsAsync;
+                        hasBody = policy.procHasImpl((cmd as CallCmd).Proc.Name);
+                    }
+
+                    // raise exception before a recursive procedure call
+                    if (isCall && hasBody && !InstrumentationConfig.cooperativeYield &&
+                        (policy.isRecCall(impl.Name, (cmd as CallCmd).callee) || InstrumentationConfig.raiseExceptionBeforeAllProcedures))
+                    {
+                        curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
+                        curr = new List<Cmd>();
+                    }
+
+                    bool hasGlobals = policy.hasGlobalVarsToInstrument(cmd);
+
+                    if (!hasGlobals)
+                    {
+                        // Instrument asserts
+                        if (cmd is AssertCmd)
+                        {
+                            curr.Add(BoogieAstFactory.instrumentAssert(mgr.errorVar, cmd as AssertCmd));
+                            addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+
+                            if (!InstrumentationConfig.cooperativeYield)
+                            {
+                                curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label, true);
+                                curr = new List<Cmd>();
+                            }
+                            else
+                            {
+                                // raiseException := (!mgr.errorVar && !inAotmicBlock)
+                                curr.Add(BoogieAstFactory.MkVarEqExpr(mgr.raiseException, Expr.And(Expr.Not(Expr.Ident(mgr.errorVar)), Expr.Not(Expr.Ident(mgr.inAtomicBlock)))));
+                                curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label);
+                                curr = new List<Cmd>();
+                            }
+                        }
+                        else
+                        {
+                            curr.Add(cmd);
+                            addedTrans(impl.Name, block.Label, incnt, cmd, curr_label, curr);
+                        }
+                    }
+                    else
+                    {
+                        if (!InstrumentationConfig.cooperativeYield)
+                            curr.Add(ContextSwitchCmd());
+
+                        // cmd reads/writes to a global variable. Duplicate it K times.
+                        curr_label = addBasicInstrumentation(impl.Name, block.Label, incnt, cmd, instrumented, curr, curr_label, fixedContext);
+                        curr = new List<Cmd>();
+                    }
+
+                    if (isCall && hasBody && !isAsyncCall)
+                    {
+                        curr_label = addRaiseExceptionInstrumentation(instrumented, curr, curr_label);
+                        curr = new List<Cmd>();
+                    }
+
+                }
+                instrumented.Add(new Block(Token.NoToken, curr_label, curr, block.TransferCmd));
+
+            }
+
+            impl.Blocks = instrumented;
+
+            return impl;
+        }
+
+        // Record the fact that we added instruction corresponding to "in" as the last instruction
+        // of "curr"
+        private void addedTrans(string procName, string inBlk, int inCnt, Cmd inCmd, string outBlk, List<Cmd> curr)
+        {
+            List<Cmd> cseq = new List<Cmd>();
+            cseq.Add(curr.Last());
+            tinfo.addTrans(procName, inBlk, inCnt, inCmd, outBlk, curr.Count - 1, cseq);
+        }
+
+        // Duplicates the cmd K times.
+        //
+        // goto label0, label1, ..., label{K-1};
+        //
+        // label0:
+        //   assume k == 0
+        //   cmd(gbl__0/gbl)
+        //   goto lab;
+        //
+        // label1:
+        //   assume k == 1
+        //   cmd(gbl__1/gbl)
+        //   goto lab;
+        //
+        //  ...
+        //
+        // lab:
+        //
+        // Inputs: the cmd to duplicate (and its location in the program procName::blockName::currCount),
+        // the list of blocks being constructed; the current block being constructed.
+        // End current block and adds two new blocks.
+        // Returns "lab".
+
+        private string addBasicInstrumentation(
+            string procName, string blockName, int currCount, Cmd cmd,
+            List<Block> instrumented, List<Cmd> curr, string curr_label,
+            int fixedContext)
+        {
+            if (cmd is AssumeCmd && policy.mode != ConcurrencyMode.FixedContext)
+            {
+                // Calling this avoids splitting control flow, but then it makes reconstructing the error trace harder
+                // (because we don't know the value of k that the assume statement used)
+                //
+                // TODO: Do this for other commands as well (like AssignCmd that only read globals, but don't write to one)
+                // This is low priority because drivers don't seem to have very many of these statements (everything is a
+                // map update)
+                return addBasicInstrumentationAssume(procName, blockName, currCount, cmd as AssumeCmd,
+                    instrumented, curr, curr_label, fixedContext);
+            }
+
+            if (policy.mode == ConcurrencyMode.FixedContext)
+            {
+                return addBasicInstrumentationFixedContext(procName, blockName, currCount, cmd,
+                    instrumented, curr, curr_label, fixedContext);
+            }
+
+            FixedDuplicator dup = new FixedDuplicator(true);
+
+            // Make K copies of this cmd.
+            // Make up K new labels
+            List<Cmd> copies = new List<Cmd>();
+            List<String> labels = new List<String>();
+
+            for (int i = 0; i < K; i++)
+            {
+                labels.Add(getNewLabel());
+
+                Cmd cmd_copy = (Cmd)dup.Visit(cmd);
+
+                cmd_renamer.K = i;
+
+                Cmd conv = (Cmd)cmd_renamer.Visit(cmd_copy);
+
+                // Instrument further if the command is an assert
+                // (We need to record the value of the assert)
+                AssertCmd acmd = conv as AssertCmd;
+                if (acmd != null)
+                {
+                    conv = BoogieAstFactory.instrumentAssert(mgr.errorVar, acmd);
+
+                }
+
+                copies.Add(conv);
+
+                // The i^th block starts with label labels[i] and its first cmd is
+                // assume (k == i)
+                blocksWithFixedK.Add(new Triple<string, string, int>(procName, labels[i], i));
+            }
+
+            // Finish the current block with a K-way goto
+            GotoCmd tc = new GotoCmd(Token.NoToken, labels);
+            Block blk = new Block(Token.NoToken, curr_label, curr, tc);
+
+            instrumented.Add(blk);
+
+            // Add K new blocks that all come back to the same location
+            string common_label = getNewLabel();
+            for (int i = 0; i < K; i++)
+            {
+                // assume(k == i)
+                AssumeCmd acmd = BoogieAstFactory.MkAssumeVarEqConst(mgr.vark, i);
+
+                List<Cmd> cs = new List<Cmd>();
+                cs.Add(acmd);
+                cs.Add(copies[i]);
+                addedTrans(procName, blockName, currCount, cmd, labels[i], cs);
+
+                instrumented.Add(new Block(Token.NoToken, labels[i], cs, BoogieAstFactory.MkGotoCmd(common_label)));
+            }
+
+            return common_label;
+
+        }
+
+        private string addBasicInstrumentationFixedContext(
+            string procName, string blockName, int currCount, Cmd cmd,
+            List<Block> instrumented, List<Cmd> curr, string curr_label,
+            int fixedContext)
+        {
+            FixedDuplicator dup = new FixedDuplicator(true);
+
+            // Make 1 copy of this cmd.
+            // Make up 1 new label
+            var label = getNewLabel();
+            Cmd cmd_copy = (Cmd)dup.Visit(cmd);
+            cmd_renamer.K = fixedContext;
+            Cmd copy = (Cmd)cmd_renamer.Visit(cmd_copy);
+
+            // Instrument further if the command is an assert
+            // (We need to record the value of the assert)
+            AssertCmd assertcmd = copy as AssertCmd;
+            if (assertcmd != null)
+            {
+                copy = BoogieAstFactory.instrumentAssert(mgr.errorVar, assertcmd);
+            }
+
+            // The i^th block starts with label labels[i] and its first cmd is
+            // assume (k == i)
+            blocksWithFixedK.Add(new Triple<string, string, int>(procName, label, fixedContext));
+
+            // Finish the current block
+            Block blk = new Block(Token.NoToken, curr_label, curr, BoogieAstFactory.MkGotoCmd(label));
+
+            instrumented.Add(blk);
+
+            // Add a new block
+            string common_label = getNewLabel();
+
+            // assume(k == i)
+            AssumeCmd acmd = BoogieAstFactory.MkAssumeVarEqConst(mgr.vark, fixedContext);
+
+            List<Cmd> cs = new List<Cmd>();
+            cs.Add(acmd);
+            cs.Add(copy);
+            addedTrans(procName, blockName, currCount, cmd, label, cs);
+
+            instrumented.Add(new Block(Token.NoToken, label, cs, BoogieAstFactory.MkGotoCmd(common_label)));
+
+            return common_label;
+        }
+
+        // CBA instrumentation for "assume c":
+        //
+        // assume k == 0 => c_0;
+        // assume k == 1 => c_1;
+        // ...
+        // assume k == K-1 => c_{K-1};
+        // goto lab;
+        //
+        // lab:
+
+        private string addBasicInstrumentationAssume(
+            string procName, string blockName, int currCount, AssumeCmd cmd,
+            List<Block> instrumented, List<Cmd> curr, string curr_label,
+            int fixedContext)
+        {
+            FixedDuplicator dup = new FixedDuplicator(true);
+
+            // Make K copies
+            for (int i = 0; i < K; i++)
+            {
+                if (policy.mode == ConcurrencyMode.FixedContext && i != fixedContext)
+                    continue;
+
+                Cmd cmd_copy = (Cmd)dup.Visit(cmd);
+                cmd_renamer.K = i;
+                var conv = (AssumeCmd)cmd_renamer.Visit(cmd_copy);
+
+                // Instrument the condition further
+                conv = BoogieAstFactory.instrumentAssume(conv, mgr.vark, i);
+                curr.Add(conv);
+
+                // Have to do a little hack here. We only say that the cmd with k==0
+                // corresponds to the original cmd (for mapBackTrace)
+                if (i == 0)
+                {
+                    addedTrans(procName, blockName, currCount, cmd, curr_label, curr);
+                }
+            }
+
+            var newlab = getNewLabel();
+            instrumented.Add(new Block(Token.NoToken, curr_label, curr, BoogieAstFactory.MkGotoCmd(newlab)));
+
+            return newlab;
+        }
+
+        // Does instrumentation for raiseException:
+        //
+        // (if havocFlag) havoc raiseException;
+        // goto label1, label2;
+        //
+        // label1:
+        //   assume raiseException == true (&& !inAtomicBlock)
+        //   return;
+        //
+        // label2:
+        //   assume raiseException == false
+        //   goto lab;
+        //
+        // lab:
+        //
+        // Inputs: the list of blocks being constructed; the current block being constructed.
+        // End current block and adds two new blocks.
+        // Returns "lab".
+        private string addRaiseExceptionInstrumentation(List<Block> instrumented, List<Cmd> curr, string curr_label)
+        {
+            return addRaiseExceptionInstrumentation(instrumented, curr, curr_label, false);
+        }
+
+        private string addRaiseExceptionInstrumentation(List<Block> instrumented, List<Cmd> curr, string curr_label, bool havocFlag)
+        {
+            if (!InstrumentationConfig.addRaiseException)
+            {
+                // End current block, goto new block
+                string newb = getNewLabel();
+                instrumented.Add(new Block(Token.NoToken, curr_label, curr, BoogieAstFactory.MkGotoCmd(newb)));
+                return newb;
+            }
+
+            if (havocFlag)
+            {
+                curr.Add(BoogieAstFactory.MkHavocVar(mgr.raiseException));
+            }
+
+            string lbl1 = getNewLabel();
+            string lbl2 = getNewLabel();
+
+            List<String> ssp = new List<String>();
+            ssp.Add(lbl1);
+            ssp.Add(lbl2);
+            instrumented.Add(new Block(Token.NoToken, curr_label, curr, new GotoCmd(Token.NoToken, ssp)));
+
+            string common_label = getNewLabel();
+            // assume(raiseException == true)
+            AssumeCmd acmd_re_true = BoogieAstFactory.MkAssumeVarEqConst(mgr.raiseException, true);
+
+            // && !inAtomicBlock
+            if (havocFlag)
+            {
+                acmd_re_true.Expr = Expr.And(acmd_re_true.Expr, Expr.Not(Expr.Ident(mgr.inAtomicBlock)));
+            }
+
+            // assume(raiseException == false)
+            AssumeCmd acmd_re_false = BoogieAstFactory.MkAssumeVarEqConst(mgr.raiseException, false);
+
+            curr = new List<Cmd>();
+            curr.Add(acmd_re_true);
+            instrumented.Add(new Block(Token.NoToken, lbl1, curr, new ReturnCmd(Token.NoToken)));
+            blocksThatRaiseException.Add(lbl1);
+
+            curr = new List<Cmd>();
+            curr.Add(acmd_re_false);
+            instrumented.Add(new Block(Token.NoToken, lbl2, curr, BoogieAstFactory.MkGotoCmd(common_label)));
+
+            return common_label;
+        }
+
+        // Instrument the given main procedure implementation.
+        // Do only that instrumentation that is specific to main; the
+        // other instrumentation is done by instrument()
+        //
+        // 1. Initialize variables (k, errorVar, etc.)
+        // 2. Add the assume statements (including the Checker)
+        // 3. Add assert(no error)
+        public void instrumentGivenMainImpl(Implementation mainImpl)
+        {
+            var blocks = mainImpl.Blocks;
+
+            // Initialize the new variables by adding at the beginning of the procedure:
+            // k := 0
+            // errorVar := true
+            // raiseException := false
+            // inAtomic := false
+            // assume tidCount >= 1
+            // tid := tidCount
+            // (leave finished and numRounds uninitialized, by design)
+            // assume Mem__1 == Mem_s_1 ...
+
+            var starting_cmd = new List<Cmd>();
+
+            starting_cmd.Add(BoogieAstFactory.MkVarEqConst(mgr.vark, 0));
+            starting_cmd.Add(BoogieAstFactory.MkVarEqConst(mgr.errorVar, true));
+            starting_cmd.Add(BoogieAstFactory.MkVarEqConst(mgr.raiseException, false));
+            starting_cmd.Add(BoogieAstFactory.MkVarEqConst(mgr.inAtomicBlock, false));
+            if (InstrumentationConfig.deterministicThreadId)
+            {
+                starting_cmd.Add(BoogieAstFactory.MkVarEqExpr(mgr.tidCountVar, TidArithmetic.getLiteral(1)));
+            }
+            starting_cmd.Add(new AssumeCmd(Token.NoToken, TidArithmetic.assumeGt(mgr.tidCountVar, 0)));
+            starting_cmd.Add(BoogieAstFactory.MkVarEqVar(mgr.tidVar, mgr.tidCountVar));
+
+            starting_cmd.AddRange(mgr.constructInitAssumes(K, policy));
+
+            var commandsAdded = starting_cmd.Count;
+            starting_cmd.AddRange(blocks[0].Cmds);
+
+            blocks[0] = new Block(blocks[0].tok, blocks[0].Label, starting_cmd, blocks[0].TransferCmd);
+            tinfo.addedInstrToBeg(mainImpl.Name, blocks[0].Label, commandsAdded);
+
+            if (!blocks[0].Label.StartsWith("cba_label_"))
+            {
+                // The above check is performed because the "tinfo" being maintained by this
+                // function is a continuation of the one by the "instrument" procedure, which
+                // already has added more basic blocks to the program.
+                tinfo.addTrans(mainImpl.Name, blocks[0].Label, blocks[0].Label);
+            }
+
+            // Iterate through the commands and do the following
+            // -- Replace "return" by goto newlab;
+            //    newlab:
+            //     (assume Mem__0 == Mem_s_1 ...; assert(errorVar); return)
+            // (This code transformation doesn't need to be recorded in "tinfo")
+            var newlab = getNewLabel();
+            var nblocks = new List<Block>();
+
+            foreach (Block block in blocks)
+            {
+                // Convert return to: goto newlab
+
+                if (block.TransferCmd is ReturnCmd)
+                {
+                    nblocks.Add(new Block(block.tok, block.Label, block.Cmds, BoogieAstFactory.MkGotoCmd(newlab)));
+                }
+                else
+                {
+                    nblocks.Add(new Block(block.tok, block.Label, block.Cmds, block.TransferCmd));
+                }
+                if (!block.Label.StartsWith("cba_label_"))
+                {
+                    tinfo.addTrans(mainImpl.Name, block.Label, block.Label);
+                }
+
+            }
+
+            // assume Mem__0 == Mem_s_1 ...
+            // assert(errorVar)
+            // return
+
+            List<Cmd> curr = new List<Cmd>();
+            curr.AddRange(mgr.constructChecker(K, policy));
+
+            // assert(errorVar)
+            curr.Add(BoogieAstFactory.MkAssert(Expr.Ident(mgr.errorVar)));
+
+            nblocks.Add(new Block(Token.NoToken, newlab, curr, new ReturnCmd(Token.NoToken)));
+
+            mainImpl.Blocks = nblocks;
+        }
+
+        /////////////////////////////
+        // private stuff
+        /////////////////////////////
+
+        private string getNewLabel()
+        {
+            string ret = "cba_label_" + (label_cnt.ToString());
+            label_cnt++;
+            return ret;
+        }
+
+        private CallCmd ContextSwitchCmd()
+        {
+            return
+                new CallCmd(Token.NoToken, mgr.getContextSwitchProcedure(K).Name, new List<Expr>(), new List<IdentifierExpr>());
+        }
+    }
+
+    // For renaming a command to use the K^th copy of the global
+    // variables
+    public class CmdRenamer : FixedVisitor
+    {
+        public int K;
+        private VariableManager mgr;
+        private InstrumentationPolicy policy;
+
+        public CmdRenamer(VariableManager p, InstrumentationPolicy pol)
+        {
+            K = 0;
+            mgr = p;
+            policy = pol;
+        }
+
+        public override Expr VisitIdentifierExpr(IdentifierExpr node)
+        {
+            IdentifierExpr newNode;
+            if (node.Name != node.Decl.Name || node.Name != node.Decl.TypedIdent.Name)
+                Console.WriteLine("Inconsistent variable/ident naming on " + node.Name + " " + node.Decl.Name + " " + node.Decl.TypedIdent.Name);
+
+            GlobalVariable g = node.Decl as GlobalVariable;
+            if (g == null)
+            {
+                newNode = null;
+            }
+            else
+            {
+                if (!policy.instrument(g))
+                {
+                    newNode = null;
+                }
+                else
+                {
+
+                    var newg = mgr.duplicateGlobalVar(g, DuplicationPolicy.OneCopy(K));
+                    Debug.Assert(newg.Count == 1);
+                    newNode = new IdentifierExpr(Token.NoToken, newg[0]);
+                }
+            }
+            return base.VisitIdentifierExpr(newNode == null ? node : newNode);
+        }
+
+        public override Variable VisitVariable(Variable node)
+        {
+            Variable newg;
+
+            GlobalVariable g = node as GlobalVariable;
+            if (g == null)
+            {
+                newg = null;
+            }
+            else
+            {
+                if (!policy.instrument(g))
+                {
+                    newg = null;
+                }
+                else
+                {
+
+                    var tmp = mgr.duplicateGlobalVar(g, DuplicationPolicy.OneCopy(K));
+                    Debug.Assert(tmp.Count == 1);
+                    newg = tmp[0];
+                }
+            }
+
+            return base.VisitVariable(newg == null ? node : newg);
+
+        }
+    }
+
+    // This class only instruments async calls. It does not modify the control flow
+    // of the program.
+    //
+    // call {:async} foo(a,b,c) is rewritten as:
+    //
+    // save vars
+    // old_k := k
+    // old_tid = tid;
+    // old_atomic := inAtomic
+    // inAtomic := false
+    //
+    // // call the translated version of the thread with a new tid
+    // old_tidCount = tidCount;
+    // havoc tidCount;
+    // assume tidCount > old_tidCount;
+    // tid = tidCount;
+    // assume !finished[tid]
+    // save thread-locals
+    // havoc thread-locals
+    // call foo(a,b,c);
+    // restore thread-locals
+    // child-tid := tid
+    //
+    // // did the thread finish?
+    // finished[tid] := not(raiseException);
+    //
+    // // How many rounds did foo take?
+    // numRounds[tid] := k;
+    //
+    // // reset variables
+    // tid = old_tid;
+    // k = old_k;
+    // raiseException = false;
+    // inAtomic = old_atomic
+    //
+    public class InstrumentAsyncCalls : FixedVisitor
+    {
+        // Does the current implementation have a async call?
+        public bool hasAsync { get; private set; }
+
+        // Current implementation
+        private string implName;
+
+        // The variable manager
+        private VariableManager vmgr;
+
+        // A record of the transformation carried out
+        private InsertionTrans tinfo;
+
+        // A local variable to represent old_tidCount
+        private Variable old_tidCount;
+
+        // A local variable to represent old_atomic
+        private Variable old_atomic;
+
+        // A local variable for child tid
+        private Variable childTid;
+
+        // Thread local variables and their Local versions
+        private Dictionary<string, GlobalVariable> threadLocalGlobals;
+        private Dictionary<string, LocalVariable> threadLocalLocals;
+
+        public InstrumentAsyncCalls(VariableManager mgr, ProgramInfo pinfo, InsertionTrans t)
+        {
+            hasAsync = false;
+            vmgr = mgr;
+            old_tidCount = null;
+            tinfo = t;
+            threadLocalGlobals = pinfo.threadLocalGlobals;
+            threadLocalLocals = new Dictionary<string, LocalVariable>();
+            foreach (var g in threadLocalGlobals.Values)
+            {
+                var lv = new LocalVariable(Token.NoToken, new TypedIdent(Token.NoToken,
+                    "loc_" + g.Name, g.TypedIdent.Type));
+                threadLocalLocals.Add(g.Name, lv);
+            }
+
+        }
+
+        public override Implementation VisitImplementation(Implementation node)
+        {
+            hasAsync = false;
+            implName = node.Name;
+            old_tidCount = new LocalVariable(Token.NoToken, new TypedIdent(Token.NoToken, "old_tidCount", vmgr.tidCountVar.TypedIdent.Type));
+            old_atomic = new LocalVariable(Token.NoToken, new TypedIdent(Token.NoToken, "old_atomic", Microsoft.Boogie.Type.Bool));
+            childTid = new LocalVariable(Token.NoToken, new TypedIdent(Token.NoToken, "child_tid_var_loc", vmgr.tidCountVar.TypedIdent.Type));
+
+            node = base.VisitImplementation(node);
+            if (hasAsync)
+            {
+                // Add old_k, old_tid, old_tidCount declarations
+                node.LocVars.Add(vmgr.getOldkLocalVar(implName));
+                node.LocVars.Add(vmgr.getOldtidLocalVar(implName));
+                node.LocVars.Add(old_tidCount);
+                node.LocVars.Add(old_atomic);
+                node.LocVars.Add(childTid);
+
+                // Add declarations for local versions of each thread-local vars
+                foreach (var l in threadLocalLocals)
+                {
+                    node.LocVars.Add(l.Value);
+                }
+
+                // Add thread locals to the modifies clause
+                var currMods = new HashSet<string>();
+                foreach (IdentifierExpr ie in node.Proc.Modifies) currMods.Add(ie.Decl.Name);
+                foreach (var g in threadLocalGlobals)
+                {
+                    if (!currMods.Contains(g.Key)) node.Proc.Modifies.Add(new IdentifierExpr(Token.NoToken, g.Value));
+                }
+            }
+            old_tidCount = null;
+            old_atomic = null;
+
+            return node;
+        }
+
+        // This is the main place where the instrumentation happens
+        public override Block VisitBlock(Block block)
+        {
+            // The new list of commands that we will construct
+            List<Cmd> lcmds = new List<Cmd>();
+
+            // index into block.Cmds
+            int inCnt = -1;
+
+            foreach (Cmd cmd in block.Cmds)
+            {
+                inCnt++;
+
+                if (!(cmd is CallCmd))
+                {
+                    lcmds.Add(cmd);
+                    addedTrans(implName, block.Label, inCnt, cmd, lcmds);
+                    continue;
+                }
+
+                CallCmd ccmd = cmd as CallCmd;
+
+                if (ccmd.callee == LanguageSemantics.getChildThreadIDName())
+                {
+                    var outv = ccmd.Outs[0];
+                    // outv := child_tid
+                    lcmds.Add(BoogieAstFactory.MkVarEqVar(outv.Decl, childTid));
+                    addedTrans(implName, block.Label, inCnt, cmd, lcmds);
+                    continue;
+                }
+
+                // Ignore non-async calls
+                if (!ccmd.IsAsync)
+                {
+                    lcmds.Add(cmd);
+                    addedTrans(implName, block.Label, inCnt, cmd, lcmds);
+                    continue;
+                }
+
+                // We have an async call. Instrument it!
+                hasAsync = true;
+
+                // old_k := k
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(
+                    vmgr.getOldkLocalVar(implName), vmgr.vark));
+
+                // old_tid := tid
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(
+                    vmgr.getOldtidLocalVar(implName), vmgr.tidVar));
+
+                // old_tidCount = tidCount
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(
+                    old_tidCount, vmgr.tidCountVar));
+
+                // old_atomic = inAotmic
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(
+                    old_atomic, vmgr.inAtomicBlock));
+
+                // inAtomic := false
+                lcmds.Add(BoogieAstFactory.MkVarEqConst(vmgr.inAtomicBlock, false));
+
+                // havoc tidCount
+                if (InstrumentationConfig.deterministicThreadId)
+                {
+                    // tidCount ++;
+                    var e = TidArithmetic.increment(vmgr.tidCountVar);
+                    lcmds.Add(BoogieAstFactory.MkVarEqExpr(vmgr.tidCountVar, e));
+                }
+                else
+                {
+                    lcmds.Add(BoogieAstFactory.MkHavocVar(vmgr.tidCountVar));
+                }
+
+                // assume tidCount > old_tidCount
+                var ae = TidArithmetic.assumeGt(vmgr.tidCountVar, old_tidCount);
+                lcmds.Add(new AssumeCmd(Token.NoToken, ae));
+
+                // tid = tidCount
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(
+                    vmgr.tidVar, vmgr.tidCountVar));
+
+                // save thread-locals
+                foreach (var tl in threadLocalLocals.Keys)
+                {
+                    // loc_tl := tl
+                    lcmds.Add(BoogieAstFactory.MkVarEqVar(threadLocalLocals[tl], threadLocalGlobals[tl]));
+                }
+
+                // havoc thread-locals
+                foreach (var tl in threadLocalLocals.Keys)
+                {
+                    // havoc tl
+                    lcmds.Add(BoogieAstFactory.MkHavocVar(threadLocalGlobals[tl]));
+                }
+
+                // call foo(a,b,c);
+                // local_tid = tid;
+
+                ccmd = new CallCmd(ccmd.tok, ccmd.Proc.Name, ccmd.Ins, ccmd.Outs, ccmd.Attributes, false);
+
+                lcmds.Add(ccmd);
+                addedTrans(implName, block.Label, inCnt, cmd, lcmds);
+
+                // child-tid := tid;
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(childTid, vmgr.tidVar));
+
+                // restore thread-locals
+                foreach (var tl in threadLocalLocals.Keys)
+                {
+                    // tl := loc_tl
+                    lcmds.Add(BoogieAstFactory.MkVarEqVar(threadLocalGlobals[tl], threadLocalLocals[tl]));
+                }
+
+                // tid = old_tid;
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(
+                    vmgr.tidVar, vmgr.getOldtidLocalVar(implName)));
+
+                // k = old_k;
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(
+                    vmgr.vark, vmgr.getOldkLocalVar(implName)));
+
+                // raiseException = false;
+                lcmds.Add(BoogieAstFactory.MkVarEqConst(vmgr.raiseException, false));
+
+                // inAtomic = old_atomic
+                lcmds.Add(BoogieAstFactory.MkVarEqVar(vmgr.inAtomicBlock, old_atomic));
+            }
+
+            block.Cmds = lcmds;
+            tinfo.addTrans(implName, block.Label, block.Label);
+
+            return block;
+        }
+
+        // Record the fact that we added instruction corresponding to "in" as the last instruction
+        // of "curr"
+        private void addedTrans(string procName, string blk, int inCnt, Cmd inCmd, List<Cmd> curr)
+        {
+            List<Cmd> cseq = new List<Cmd>();
+            cseq.Add(curr.Last());
+            tinfo.addTrans(procName, blk, inCnt, inCmd, blk, curr.Count - 1, cseq);
+        }
+    }
+
     // This class massages call commands to a better form for the instrumenter.
     // Let g_i be global variables and l_i be local variables.
     // It replaces "call g_1 := foo(g_2,l_1)" with
