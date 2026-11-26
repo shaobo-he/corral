@@ -30,8 +30,15 @@ from `source/` (61 C# files down to 29). The verification behavior on SMACK's
 invocations is unchanged — every removal was validated against a golden-output
 harness (including SV-COMP mode) and the regression suite.
 
-**Scope is sequential-only.** `/k` still parses, but the concurrency machinery
-behind it is gone.
+**Concurrency is supported for SMACK's `--pthread` programs.** A program with
+`async` calls is checked under the context bound `/k` by upstream's
+sequentialization: `StormInstrumentationPass` with `Instrumenter`,
+`InstrumentAsyncCalls`, `VariableManager`, `InstrumentationPolicy` and
+`WellFormedProg`, plus the refinement over all interleavings of a counterexample
+in `Driver.checkAndRefine`. They were restored from upstream, limited to the
+code that upstream Corral runs on SMACK's pthread programs with SMACK's flags,
+which was found by line coverage of upstream on those programs minus its
+coverage on sequential ones.
 
 Removed, among others:
 
@@ -39,11 +46,9 @@ Removed, among others:
   dead since `useDI=false`, plus the forward/backward search and the alternate
   stratified-inlining strategies. `StratifiedInlining.cs` is now the plain
   forward loop, the refinement entry point, and the error reporter.
-- The **concurrency instrumentation** subtree (`StormInstrumentationPass`,
-  `Instrumenter`), deep-assert passes, static inlining, and the static-analysis
-  stack (`StaticAnalysis`, `WeightDomains`, `Policy`, `LiveVariableAnalysis`,
-  `ModSet`, `Coverage`, `ErrorProjection`, `VariableManager`,
-  `RewriteCallDontCare`, `WellFormedProg`).
+- Deep-assert passes, static inlining, and the static-analysis stack
+  (`StaticAnalysis`, `WeightDomains`, `LiveVariableAnalysis`, `ModSet`,
+  `Coverage`, `ErrorProjection`, `RewriteCallDontCare`).
 - The `AddOns/` tree (FastAVN, AngelicVerifierNull, AliasAnalysis, PropInst) and
   their regressions.
 
@@ -66,7 +71,10 @@ other things:
 - Preserving legacy async-call handling during resolve/typecheck, and
   normalizing procedure links before modifies inference.
 - Passing `MeasureCmds`, which 3.5.7 made a required `Procedure` constructor
-  parameter, at all eight places corral builds one.
+  parameter, at every place corral builds one.
+- In the restored concurrency code: Boogie 3 has no `yield` statement, so
+  `InstrumentationPolicy.isYield` is always false; `Block.widenBlock` and
+  `GotoCmd.labelNames` are now `WidenBlock` and `LabelNames`.
 
 ## Building and running
 
@@ -138,7 +146,7 @@ still accepted and parsed; it just no longer switches array theory on.
 
 ## Regressions
 
-The tests live in `test/regression` (44 cases listed in `Files`; each line is a
+The tests live in `test/regression` (54 cases listed in `Files`; each line is a
 `.bpl` path plus the expected outcome, `b` for buggy or `c` for correct). Run
 them all with:
 
@@ -154,8 +162,9 @@ $ cd test/regression/001 && ${CORRAL_EXE} 001.bpl /flags:config
 ```
 
 Tests for removed features (`/track`, `/concat`, `/cooperative`,
-`/staticInlining`, `/stackDepthBound`, `/noTrace`, `fwdbck`) and
-concurrency-dependent tests have been pruned along with the code.
+`/staticInlining`, `/stackDepthBound`, `/noTrace`, `fwdbck`) have been pruned
+along with the code. The concurrent tests that use only the flags above are
+kept.
 
 [license-badge]: https://img.shields.io/github/license/shaobo-he/corral?color=blue
 [ci]:            https://github.com/shaobo-he/corral/actions/workflows/test.yml?query=branch%3Amini-corral-boogie-3.x
