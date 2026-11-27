@@ -59,7 +59,7 @@ jobs:
       - name: Setup dotnet
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
 
       # PackAsTool and GeneratePackageOnBuild exist for the NuGet tool package;
       # turning them off keeps `publish` from also packing. The version is not

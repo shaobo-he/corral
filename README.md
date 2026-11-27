@@ -92,7 +92,7 @@ with `gh release edit <tag> --draft=false`.
 
 ### Building from source
 
-Build with [.NET 8](https://dotnet.microsoft.com):
+Build with [.NET 10](https://dotnet.microsoft.com):
 
 ```console
 $ dotnet build source/Corral.sln
@@ -101,7 +101,7 @@ $ dotnet build source/Corral.sln
 Then run the generated executable:
 
 ```console
-$ source/Corral/bin/Debug/net8.0/corral input.bpl /recursionBound:10
+$ source/Corral/bin/Debug/net10.0/corral input.bpl /recursionBound:10
 ```
 
 Note that this fork is **not** published to NuGet — `dotnet tool install
